@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <string name="app_name">HorizonCam</string>
+    <string name="permission_needed">HorizonCam needs camera access to work. Microphone is used for video sound.</string>
+    <string name="grant">Grant access</string>
+    <string name="open_settings">Open settings</string>
+    <string name="welcome_title">Horizon Lock</string>
+    <string name="welcome_body">Your video stays perfectly level, even if you rotate the phone a full 360°.\n\n• The yellow frame is exactly what gets recorded. It stays level with the real horizon while you move.\n• You can record landscape video while holding the phone upright. Pick the frame with the orientation button at the top.\n• 360° Lock crops the most. Auto Level crops less and fixes tilts up to ±30°.\n• Tap to focus. Long-press to lock focus and exposure. Pinch to zoom.</string>
+    <string name="got_it">Got it</string>
+</resources>
