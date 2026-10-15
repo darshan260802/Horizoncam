@@ -43,5 +43,11 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <!-- Minimal crash report screen; uses only the framework theme on purpose. -->
+        <activity
+            android:name=".CrashReportActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
     </application>
 </manifest>

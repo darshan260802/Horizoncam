@@ -29,8 +29,8 @@ Horizon-locked video for every Android phone. HorizonCam brings the Galaxy S26 "
 - Saves to `DCIM/HorizonCam`, with a last-capture thumbnail.
 
 **Testing helpers**
-- Settings › About › *Camera diagnostics*: copyable device and camera report.
-- Crashes are captured and shown, with a Copy button, on the next launch.
+- Settings › About › *Camera diagnostics*: copyable device and camera report, plus recent errors.
+- If the app crashes, the next launch opens a crash report screen with Copy and Share buttons. This also works for crashes during start-up and for native or driver crashes: the last start-up step is recorded.
 
 ## Install
 
@@ -43,12 +43,12 @@ All builds (CI, local and offline) are signed with the shared test key in `keyst
 ### Android Studio / Gradle (normal way)
 ```
 ./gradlew assembleDebug          # app/build/outputs/apk/debug/
-./gradlew testDebugUnitTest      # geometry unit tests
+./gradlew testDebugUnitTest      # geometry tests + Robolectric start-up smoke test
 ```
 Requires JDK 17+ and the Android SDK (compileSdk 36). Android Studio installs everything automatically.
 
 ### Offline build (no Android SDK)
-`tools/offline-build.sh` builds a signed APK using only Debian packages (`aapt`, `dalvik-exchange`, `zipalign`, `apksigner`), the Kotlin compiler from GitHub and the Android framework jar from Maven Central. This is how the first APK was produced in a sandbox without access to Google's servers.
+`tools/offline-build.sh` builds a signed APK without the Android SDK. It uses Debian packages (`aapt`, `zipalign`, `apksigner`), the Kotlin compiler from GitHub, the Android framework jar from Maven Central and Google's official D8 dexer from the R8 release bucket. This is how APKs are produced in sandboxes without access to Google Maven.
 
 ## How it works
 

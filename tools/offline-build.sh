@@ -5,9 +5,11 @@
 # The normal way to build is still Android Studio / `./gradlew assembleDebug`.
 #
 # Requirements (Debian/Ubuntu):
-#   sudo apt-get install -y aapt zipalign apksigner dalvik-exchange openjdk-17-jdk zip unzip curl
-# Everything else (Kotlin compiler, Android framework jars) is downloaded from
-# GitHub releases and Maven Central into $HORIZONCAM_CACHE (default ~/.cache/horizoncam-offline).
+#   sudo apt-get install -y aapt zipalign apksigner openjdk-17-jdk zip unzip curl
+# Everything else is downloaded into $HORIZONCAM_CACHE (default ~/.cache/horizoncam-offline):
+#   - Kotlin compiler (GitHub releases)
+#   - Android framework jars published by Robolectric (Maven Central)
+#   - Google's official D8 dexer (R8 release jar on storage.googleapis.com)
 #
 # Usage: tools/offline-build.sh [output.apk]
 set -euo pipefail
@@ -18,6 +20,7 @@ WORK="$ROOT/build/offline"
 OUT_APK="${1:-$ROOT/build/outputs/HorizonCam-debug.apk}"
 
 KOTLIN_VERSION="2.0.21"
+R8_VERSION="8.11.18"
 # Compile against the full Android 16 (API 36) framework published by Robolectric on Maven Central.
 ANDROID_ALL_COMPILE="16-robolectric-13921718"
 # aapt (v1) cannot parse the newest resource table format, so link resources against API 34.
@@ -30,7 +33,7 @@ prop() { grep -E "^$1=" "$ROOT/gradle.properties" | cut -d= -f2- | tr -d '[:spac
 VERSION_CODE="$(prop horizoncam.versionCode)"
 VERSION_NAME="$(prop horizoncam.versionName)"
 
-for tool in aapt zipalign apksigner dalvik-exchange javac curl unzip zip; do
+for tool in aapt zipalign apksigner java javac jar curl unzip zip; do
   command -v "$tool" >/dev/null || { echo "Missing tool: $tool" >&2; exit 1; }
 done
 
@@ -47,6 +50,7 @@ MAVEN="https://repo1.maven.org/maven2"
 fetch "$MAVEN/org/robolectric/android-all/$ANDROID_ALL_COMPILE/android-all-$ANDROID_ALL_COMPILE.jar" "$CACHE/android-all-$ANDROID_ALL_COMPILE.jar"
 fetch "$MAVEN/org/robolectric/android-all/$ANDROID_ALL_RES/android-all-$ANDROID_ALL_RES.jar" "$CACHE/android-all-$ANDROID_ALL_RES.jar"
 fetch "https://github.com/JetBrains/kotlin/releases/download/v$KOTLIN_VERSION/kotlin-compiler-$KOTLIN_VERSION.zip" "$CACHE/kotlin-compiler-$KOTLIN_VERSION.zip"
+fetch "https://storage.googleapis.com/r8-releases/raw/$R8_VERSION/r8lib.jar" "$CACHE/r8lib-$R8_VERSION.jar"
 
 KOTLINC_HOME="$CACHE/kotlinc-$KOTLIN_VERSION"
 if [ ! -x "$KOTLINC_HOME/bin/kotlinc" ]; then
@@ -88,10 +92,16 @@ javac --release 8 -nowarn -cp "$ANDROID_JAR" -d "$WORK/classes" $(find "$WORK/ge
   "$ROOT/app/src/main/java" 2>&1 | grep -v '^warning:' || true
 [ -f "$WORK/classes/com/darshan/horizoncam/MainActivity.class" ] || { echo "Kotlin compilation failed" >&2; exit 1; }
 
-echo "[3/5] Dexing"
-cp "$KOTLINC_HOME/lib/kotlin-stdlib.jar" "$WORK/kotlin-stdlib.jar"
-zip -q -d "$WORK/kotlin-stdlib.jar" 'META-INF/versions/*' >/dev/null 2>&1 || true
-dalvik-exchange --dex --min-sdk-version="$MIN_SDK" --output="$WORK/classes.dex" "$WORK/classes" "$WORK/kotlin-stdlib.jar"
+echo "[3/5] Dexing (D8)"
+(cd "$WORK/classes" && jar cf "$WORK/app-classes.jar" .)
+JDK_HOME="$(dirname "$(dirname "$(readlink -f "$(command -v javac)")")")"
+mkdir -p "$WORK/dex"
+java -cp "$CACHE/r8lib-$R8_VERSION.jar" com.android.tools.r8.D8 \
+  --release --min-api "$MIN_SDK" \
+  --lib "$JDK_HOME" --lib "$ANDROID_JAR" \
+  --output "$WORK/dex" \
+  "$WORK/app-classes.jar" "$KOTLINC_HOME/lib/kotlin-stdlib.jar"
+mv "$WORK/dex/classes.dex" "$WORK/classes.dex"
 
 echo "[4/5] Packaging"
 cp "$WORK/resources.ap_" "$WORK/unsigned.apk"

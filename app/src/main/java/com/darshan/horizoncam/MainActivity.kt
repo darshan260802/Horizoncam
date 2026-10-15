@@ -142,6 +142,8 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private var insetTop = 0
     private var insetBottom = 0
     private var permissionAsked = false
+    /** False when onCreate bailed out early (crash report shown instead). */
+    private var initialized = false
 
     private val dp get() = resources.displayMetrics.density
 
@@ -149,14 +151,35 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Show the report of a previous crash first (in its own, minimal activity).
+        val crash = CrashLogger.unseenCrash(this)
+        val unfinished = CrashLogger.consumeUnfinishedStartup(this)
+        if (!intent.getBooleanExtra(EXTRA_SKIP_REPORT, false)) {
+            val report = crash ?: unfinished?.let { CrashLogger.unfinishedStartupReport(this, it) }
+            if (report != null) {
+                startActivity(Intent(this, CrashReportActivity::class.java).putExtra(CrashReportActivity.EXTRA_REPORT, report))
+                finish()
+                return
+            }
+        }
+        CrashLogger.step(this, "onCreate")
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setupEdgeToEdge()
+        CrashLogger.step(this, "inflate layout")
         setContentView(R.layout.activity_main)
         bindViews()
 
         settings = Settings(this)
+        CrashLogger.step(this, "motion sensor")
         sensor = HorizonSensor(this)
+        CrashLogger.step(this, "OpenGL renderer")
         renderer = HorizonRenderer(sensor)
+        renderer.frameListener = {
+            renderer.frameListener = null
+            CrashLogger.step(this, "first camera frame")
+            main.postDelayed({ CrashLogger.startupDone(this) }, 1500)
+        }
+        CrashLogger.step(this, "camera service")
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         camera = CameraController(cameraManager, this)
         recorder = VideoRecorder(this, renderer, this)
@@ -168,9 +191,14 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             }
         } catch (e: Exception) { null }
 
-        cameras = CameraInfo.loadAll(cameraManager)
-        backLenses = LensCatalog.backLenses(cameras)
-        frontLens = LensCatalog.frontLens(cameras)
+        CrashLogger.step(this, "camera list")
+        try {
+            cameras = CameraInfo.loadAll(cameraManager)
+            backLenses = LensCatalog.backLenses(cameras)
+            frontLens = LensCatalog.frontLens(cameras)
+        } catch (e: Exception) {
+            CrashLogger.nonFatal(this, "camera list", e)
+        }
         currentLens = if (settings.useFront && frontLens != null) frontLens else defaultBackLens()
         zoomRatio = currentLens?.zoomRatio ?: 1f
 
@@ -189,6 +217,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         overlay.onLevelReached = {
             if (settings.haptics) root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
         }
+        CrashLogger.step(this, "controls")
         setupListeners()
         setupGestures()
         setupInsets()
@@ -204,16 +233,21 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
         if (renderer.error != null) toast(renderer.error!!)
         if (!sensor.available) toast("No motion sensor found: horizon lock is unavailable")
-        CrashLogger.unseenCrash(this)?.let { showCrashDialog(it) }
+        initialized = true
+        CrashLogger.step(this, "onCreate done")
     }
 
     override fun onResume() {
         super.onResume()
+        if (!initialized) return
         resumed = true
+        CrashLogger.step(this, "onResume")
         hideSystemBars()
         if (hasCameraPermission()) {
             permissionPanel.visibility = View.GONE
+            CrashLogger.step(this, "start motion sensor")
             sensor.start()
+            CrashLogger.step(this, "open camera")
             openCamera(force = true)
             maybeShowWelcome()
         } else {
@@ -223,6 +257,12 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     override fun onPause() {
+        if (!initialized) {
+            super.onPause()
+            return
+        }
+        // Leaving normally is not a start-up crash.
+        CrashLogger.startupDone(this)
         resumed = false
         cancelCountdown()
         if (recorder.isRecording) stopRecording()
@@ -239,6 +279,10 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     override fun onDestroy() {
+        if (!initialized) {
+            super.onDestroy()
+            return
+        }
         main.removeCallbacksAndMessages(null)
         camera.release()
         renderer.release()
@@ -249,7 +293,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     override fun onWindowFocusChanged(hasFocus: Boolean) {
         super.onWindowFocusChanged(hasFocus)
-        if (hasFocus) hideSystemBars()
+        if (hasFocus && initialized) hideSystemBars()
     }
 
     /** Closes the top-most panel. Returns false when nothing was open. */
@@ -262,7 +306,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     @Deprecated("Deprecated in Java")
     override fun onBackPressed() {
         @Suppress("DEPRECATION")
-        if (!handleBack()) super.onBackPressed()
+        if (!initialized || !handleBack()) super.onBackPressed()
     }
 
     private var backCallback: Any? = null
@@ -502,7 +546,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
-        if (requestCode != REQ_PERMS) return
+        if (requestCode != REQ_PERMS || !initialized) return
         if (hasCameraPermission()) {
             permissionPanel.visibility = View.GONE
             if (resumed) {
@@ -594,6 +638,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     override fun onCameraOpened(info: CameraInfo, inputSize: Size) {
+        CrashLogger.step(this, "camera ${info.id} streaming ${inputSize.width}x${inputSize.height}")
         main.post {
             cameraReady = true
             sessionInput = inputSize
@@ -610,6 +655,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     override fun onCameraError(message: String) {
+        CrashLogger.nonFatal(this, "camera", RuntimeException(message))
         main.post {
             cameraReady = false
             toast(message)
@@ -701,9 +747,11 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     private fun displayRotationDeg(): Int {
+        // View.getDisplay() is safe once attached; Context.getDisplay() can throw on some contexts.
         @Suppress("DEPRECATION")
-        val rot = if (Build.VERSION.SDK_INT >= 30) display?.rotation ?: 0 else windowManager.defaultDisplay.rotation
-        return rot * 90
+        val d = root.display
+            ?: try { if (Build.VERSION.SDK_INT >= 30) display else windowManager.defaultDisplay } catch (e: Exception) { null }
+        return (d?.rotation ?: 0) * 90
     }
 
     private fun updatePreviewArea() {
@@ -1314,6 +1362,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         sb.append("Encoders: AVC=${EncoderSupport.hasEncoder(MediaFormat.MIMETYPE_VIDEO_AVC)} HEVC=${EncoderSupport.hasEncoder(MediaFormat.MIMETYPE_VIDEO_HEVC)}\n")
         sb.append("Lenses: ${backLenses.joinToString { "${it.label}@${it.cameraId}/${it.zoomRatio}" }} front=${frontLens?.cameraId}\n\n")
         for (c in cameras) sb.append(c.describe()).append('\n')
+        CrashLogger.nonFatalLog(this)?.let { sb.append("\nRecent errors:\n").append(it.takeLast(4000)) }
         val text = sb.toString()
         dialogBuilder()
             .setTitle("Camera diagnostics")
@@ -1340,6 +1389,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     // ------------------------------------------------------------------ keys
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent): Boolean {
+        if (!initialized) return super.onKeyDown(keyCode, event)
         if (keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN || keyCode == KeyEvent.KEYCODE_CAMERA) {
             if (settingsHost.visibility == View.VISIBLE || permissionPanel.visibility == View.VISIBLE) return super.onKeyDown(keyCode, event)
             val action = if (keyCode == KeyEvent.KEYCODE_CAMERA) VolumeAction.SHUTTER else settings.volumeAction
@@ -1363,6 +1413,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent): Boolean {
+        if (!initialized) return super.onKeyUp(keyCode, event)
         if ((keyCode == KeyEvent.KEYCODE_VOLUME_UP || keyCode == KeyEvent.KEYCODE_VOLUME_DOWN) &&
             settings.volumeAction != VolumeAction.OFF && settingsHost.visibility != View.VISIBLE
         ) return true
@@ -1371,5 +1422,6 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     companion object {
         private const val REQ_PERMS = 42
+        const val EXTRA_SKIP_REPORT = "skip_report"
     }
 }
