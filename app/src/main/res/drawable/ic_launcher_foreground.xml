@@ -1,0 +1,15 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="108" android:viewportHeight="108">
+    <!-- ground (lower half of the lens) -->
+    <path android:fillColor="#59FFC83D" android:pathData="M32.5,54 a21.5,21.5 0 0,0 43,0 Z"/>
+    <!-- lens ring -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFFFFF" android:strokeWidth="5"
+        android:pathData="M54,30 a24,24 0 1,1 0,48 a24,24 0 1,1 0,-48"/>
+    <!-- horizon -->
+    <path android:fillColor="#00000000" android:strokeColor="#FFFFC83D" android:strokeWidth="5"
+        android:strokeLineCap="round" android:pathData="M24,54 L84,54"/>
+    <!-- level bubble -->
+    <path android:fillColor="#FFFFC83D" android:pathData="M54,36.5 a3.5,3.5 0 1,1 0,7 a3.5,3.5 0 1,1 0,-7"/>
+</vector>
