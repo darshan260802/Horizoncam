@@ -1,6 +1,7 @@
 package com.darshan.horizoncam
 
 import android.Manifest
+import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
 import android.content.ClipData
@@ -8,6 +9,7 @@ import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.ColorStateList
 import android.graphics.Bitmap
 import android.graphics.RectF
 import android.hardware.camera2.CameraManager
@@ -34,7 +36,9 @@ import android.view.SurfaceView
 import android.view.View
 import android.view.WindowInsets
 import android.view.WindowManager
+import android.view.animation.DecelerateInterpolator
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.ImageButton
 import android.widget.ImageView
 import android.widget.LinearLayout
@@ -57,6 +61,7 @@ import com.darshan.horizoncam.core.VideoQuality
 import com.darshan.horizoncam.core.VolumeAction
 import com.darshan.horizoncam.core.WbPreset
 import com.darshan.horizoncam.gl.HorizonRenderer
+import com.darshan.horizoncam.gl.RenderState
 import com.darshan.horizoncam.media.EncoderSupport
 import com.darshan.horizoncam.media.PhotoProcessor
 import com.darshan.horizoncam.media.VideoRecorder
@@ -64,12 +69,16 @@ import com.darshan.horizoncam.sensor.HorizonSensor
 import com.darshan.horizoncam.ui.ActionRow
 import com.darshan.horizoncam.ui.OverlayView
 import com.darshan.horizoncam.ui.SettingRow
-import com.darshan.horizoncam.ui.SettingsPanel
+import com.darshan.horizoncam.ui.SettingsSheet
 import com.darshan.horizoncam.ui.ShutterButton
+import com.darshan.horizoncam.ui.Ui
+import com.darshan.horizoncam.ui.ZoomBar
 import com.darshan.horizoncam.util.CrashLogger
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
 import kotlin.math.abs
+import kotlin.math.exp
+import kotlin.math.floor
 import kotlin.math.max
 import kotlin.math.roundToInt
 
@@ -89,33 +98,39 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     // views
     private lateinit var root: View
     private lateinit var preview: SurfaceView
+    private lateinit var curtain: View
     private lateinit var overlay: OverlayView
-    private lateinit var topBar: LinearLayout
     private lateinit var statusRow: LinearLayout
-    private lateinit var bottomPanel: LinearLayout
-    private lateinit var btnSettings: ImageButton
-    private lateinit var chipLock: TextView
-    private lateinit var chipFrame: TextView
-    private lateinit var btnTorch: ImageButton
-    private lateinit var btnTimer: ImageButton
-    private lateinit var btnEv: ImageButton
     private lateinit var recTime: TextView
     private lateinit var infoText: TextView
+    private lateinit var bottomPanel: LinearLayout
+    private lateinit var optionPanel: LinearLayout
+    private lateinit var optionTitle: TextView
+    private lateinit var optionRow: LinearLayout
     private lateinit var evPanel: LinearLayout
     private lateinit var evLabel: TextView
     private lateinit var evSeek: SeekBar
     private lateinit var wbRow: LinearLayout
-    private lateinit var zoomRow: LinearLayout
+    private lateinit var quickBar: LinearLayout
+    private lateinit var qSettings: TextView
+    private lateinit var qLock: TextView
+    private lateinit var qFrame: TextView
+    private lateinit var qTorch: TextView
+    private lateinit var qTimer: TextView
+    private lateinit var qAdjust: TextView
+    private lateinit var zoomRow: ZoomBar
+    private lateinit var modeRow: LinearLayout
     private lateinit var modePhoto: TextView
     private lateinit var modeVideo: TextView
     private lateinit var modeTimelapse: TextView
+    private lateinit var controlsRow: View
     private lateinit var thumb: ImageView
     private lateinit var shutter: ShutterButton
     private lateinit var btnSwitch: ImageButton
     private lateinit var toastView: TextView
     private lateinit var permissionPanel: View
-    private lateinit var settingsHost: android.widget.FrameLayout
-    private var settingsPanel: SettingsPanel? = null
+    private lateinit var settingsHost: FrameLayout
+    private var settingsSheet: SettingsSheet? = null
 
     // state
     private var cameras: List<CameraInfo> = emptyList()
@@ -123,8 +138,13 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private var frontLens: LensOption? = null
     private var currentLens: LensOption? = null
     private var zoomRatio = 1f
+    private var zoomAnimator: ValueAnimator? = null
+    private var zoomDragStart = 1f
+    private var lastZoomTick = 0
     private var torchOn = false
     private var evIndex = 0
+    private var evDragStart = 0
+    private var evDragging = false
     private var wb = WbPreset.AUTO
     private var cameraReady = false
     private var resumed = false
@@ -179,6 +199,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             CrashLogger.step(this, "first camera frame")
             main.postDelayed({ CrashLogger.startupDone(this) }, 1500)
         }
+        renderer.sessionFrameListener = { main.post { curtainOut() } }
         CrashLogger.step(this, "camera service")
         cameraManager = getSystemService(Context.CAMERA_SERVICE) as CameraManager
         camera = CameraController(cameraManager, this)
@@ -214,9 +235,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         })
 
         overlay.stateSource = OverlayView.StateSource { renderer.state }
-        overlay.onLevelReached = {
-            if (settings.haptics) root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
-        }
+        overlay.onLevelReached = { if (settings.haptics) root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK) }
         CrashLogger.step(this, "controls")
         setupListeners()
         setupGestures()
@@ -284,6 +303,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             return
         }
         main.removeCallbacksAndMessages(null)
+        zoomAnimator?.cancel()
         camera.release()
         renderer.release()
         worker.shutdown()
@@ -298,8 +318,8 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     /** Closes the top-most panel. Returns false when nothing was open. */
     private fun handleBack(): Boolean = when {
-        settingsHost.visibility == View.VISIBLE -> { closeSettings(); true }
-        evPanel.visibility == View.VISIBLE -> { setEvPanelVisible(false); true }
+        settingsHost.visibility == View.VISIBLE -> { settingsSheet?.dismiss(); true }
+        optionPanel.visibility == View.VISIBLE || evPanel.visibility == View.VISIBLE -> { hidePopups(); true }
         else -> false
     }
 
@@ -314,7 +334,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     /** Android 13+: predictive back only reaches the app through a registered callback. */
     private fun updateBackCallback() {
         if (Build.VERSION.SDK_INT < 33) return
-        val needed = settingsHost.visibility == View.VISIBLE || evPanel.visibility == View.VISIBLE
+        val needed = settingsHost.visibility == View.VISIBLE || optionPanel.visibility == View.VISIBLE || evPanel.visibility == View.VISIBLE
         val dispatcher = onBackInvokedDispatcher
         if (needed && backCallback == null) {
             val cb = android.window.OnBackInvokedCallback { handleBack() }
@@ -326,37 +346,37 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         }
     }
 
-    private fun setEvPanelVisible(visible: Boolean) {
-        evPanel.visibility = if (visible) View.VISIBLE else View.GONE
-        if (visible) refreshEvPanel()
-        updateBackCallback()
-    }
-
     // ------------------------------------------------------------------ setup
 
     private fun bindViews() {
         root = findViewById(R.id.root)
         preview = findViewById(R.id.preview)
+        curtain = findViewById(R.id.curtain)
         overlay = findViewById(R.id.overlay)
-        topBar = findViewById(R.id.topBar)
         statusRow = findViewById(R.id.statusRow)
-        bottomPanel = findViewById(R.id.bottomPanel)
-        btnSettings = findViewById(R.id.btnSettings)
-        chipLock = findViewById(R.id.chipLock)
-        chipFrame = findViewById(R.id.chipFrame)
-        btnTorch = findViewById(R.id.btnTorch)
-        btnTimer = findViewById(R.id.btnTimer)
-        btnEv = findViewById(R.id.btnEv)
         recTime = findViewById(R.id.recTime)
         infoText = findViewById(R.id.infoText)
+        bottomPanel = findViewById(R.id.bottomPanel)
+        optionPanel = findViewById(R.id.optionPanel)
+        optionTitle = findViewById(R.id.optionTitle)
+        optionRow = findViewById(R.id.optionRow)
         evPanel = findViewById(R.id.evPanel)
         evLabel = findViewById(R.id.evLabel)
         evSeek = findViewById(R.id.evSeek)
         wbRow = findViewById(R.id.wbRow)
+        quickBar = findViewById(R.id.quickBar)
+        qSettings = findViewById(R.id.qSettings)
+        qLock = findViewById(R.id.qLock)
+        qFrame = findViewById(R.id.qFrame)
+        qTorch = findViewById(R.id.qTorch)
+        qTimer = findViewById(R.id.qTimer)
+        qAdjust = findViewById(R.id.qAdjust)
         zoomRow = findViewById(R.id.zoomRow)
+        modeRow = findViewById(R.id.modeRow)
         modePhoto = findViewById(R.id.modePhoto)
         modeVideo = findViewById(R.id.modeVideo)
         modeTimelapse = findViewById(R.id.modeTimelapse)
+        controlsRow = findViewById(R.id.controlsRow)
         thumb = findViewById(R.id.thumb)
         shutter = findViewById(R.id.shutter)
         btnSwitch = findViewById(R.id.btnSwitch)
@@ -405,11 +425,10 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                 insetTop = if (Build.VERSION.SDK_INT >= 28) insets.displayCutout?.safeInsetTop ?: 0 else 0
                 insetBottom = insets.systemWindowInsetBottom
             }
-            topBar.setPadding(topBar.paddingLeft, insetTop + (8 * dp).toInt(), topBar.paddingRight, topBar.paddingBottom)
-            (statusRow.layoutParams as android.widget.FrameLayout.LayoutParams).topMargin = insetTop + (62 * dp).toInt()
+            (statusRow.layoutParams as FrameLayout.LayoutParams).topMargin = insetTop + (12 * dp).toInt()
             statusRow.requestLayout()
-            bottomPanel.setPadding(0, 0, 0, insetBottom + (12 * dp).toInt())
-            settingsHost.setPadding(0, insetTop, 0, insetBottom)
+            bottomPanel.setPadding(0, 0, 0, insetBottom + (8 * dp).toInt())
+            settingsHost.setPadding(0, insetTop, 0, 0)
             root.post { updatePreviewArea() }
             insets
         }
@@ -424,47 +443,52 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                 startActivity(Intent(SysSettings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)))
             }
         }
-        btnSettings.setOnClickListener { openSettings() }
-        chipLock.setOnClickListener {
+        qSettings.setOnClickListener { tap(); openSettings() }
+        qLock.setOnClickListener {
+            tap()
             if (recorder.isRecording) return@setOnClickListener
-            settings.lockMode = when (settings.lockMode) {
-                LockMode.LOCK_360 -> LockMode.LEVEL
-                LockMode.LEVEL -> LockMode.OFF
-                LockMode.OFF -> LockMode.LOCK_360
+            showOptions(
+                "Horizon lock",
+                listOf("360° Lock", "Auto Level ±${settings.levelRange}°", "Off"),
+                settings.lockMode.ordinal
+            ) { i ->
+                settings.lockMode = LockMode.values()[i]
+                toast(lockDescription())
+                onLockModeChanged()
             }
-            toast(lockDescription())
-            onLockModeChanged()
         }
-        chipFrame.setOnClickListener {
+        qFrame.setOnClickListener {
+            tap()
             if (recorder.isRecording) return@setOnClickListener
-            settings.frameOrientation = when (settings.frameOrientation) {
-                FrameOrientation.AUTO -> FrameOrientation.LANDSCAPE
-                FrameOrientation.LANDSCAPE -> FrameOrientation.PORTRAIT
-                FrameOrientation.PORTRAIT -> FrameOrientation.AUTO
+            val a = currentAspect()
+            val portrait = a.label.split(":").let { "${it[1]}:${it[0]}" }
+            val labels = if (a == AspectRatio.R1_1) listOf("Auto", "Square", "Square")
+            else listOf("Auto (follow phone)", "Landscape ${a.label}", "Portrait $portrait")
+            showOptions("Recording frame", labels, settings.frameOrientation.ordinal) { i ->
+                settings.frameOrientation = FrameOrientation.values()[i]
+                reconfigure()
             }
-            toast(when (settings.frameOrientation) {
-                FrameOrientation.AUTO -> "Frame follows how you hold the phone"
-                FrameOrientation.LANDSCAPE -> "Always landscape, however you hold the phone"
-                FrameOrientation.PORTRAIT -> "Always portrait, however you hold the phone"
-            })
-            reconfigure()
         }
-        btnTorch.setOnClickListener {
+        qTorch.setOnClickListener {
+            tap()
             val info = camera.currentInfo
             if (info == null || !info.hasFlash) {
-                toast("No flash on this camera")
+                toast("No light on this camera")
                 return@setOnClickListener
             }
             torchOn = !torchOn
             camera.setTorch(torchOn)
             refreshUi()
         }
-        btnTimer.setOnClickListener {
-            settings.timerSec = when (settings.timerSec) { 0 -> 3; 3 -> 10; else -> 0 }
-            toast(if (settings.timerSec == 0) "Timer off" else "Timer ${settings.timerSec}s")
-            refreshUi()
+        qTimer.setOnClickListener {
+            tap()
+            val values = listOf(0, 3, 10)
+            showOptions("Self-timer", listOf("Off", "3 seconds", "10 seconds"), values.indexOf(settings.timerSec).coerceAtLeast(0)) { i ->
+                settings.timerSec = values[i]
+                refreshUi()
+            }
         }
-        btnEv.setOnClickListener { setEvPanelVisible(evPanel.visibility != View.VISIBLE) }
+        qAdjust.setOnClickListener { tap(); setEvPanelVisible(evPanel.visibility != View.VISIBLE) }
         evSeek.setOnSeekBarChangeListener(object : SeekBar.OnSeekBarChangeListener {
             override fun onProgressChanged(sb: SeekBar, progress: Int, fromUser: Boolean) {
                 if (!fromUser) return
@@ -472,6 +496,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                 evIndex = info.evRange.lower + progress
                 camera.setEv(evIndex)
                 refreshEvPanel()
+                refreshUi()
             }
             override fun onStartTrackingTouch(sb: SeekBar) {}
             override fun onStopTrackingTouch(sb: SeekBar) {}
@@ -480,43 +505,92 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             evIndex = 0
             camera.setEv(0)
             refreshEvPanel()
+            refreshUi()
         }
         modePhoto.setOnClickListener { setMode(CaptureMode.PHOTO) }
         modeVideo.setOnClickListener { setMode(CaptureMode.VIDEO) }
         modeTimelapse.setOnClickListener { setMode(CaptureMode.TIMELAPSE) }
-        shutter.setOnClickListener { onShutter() }
-        btnSwitch.setOnClickListener { switchCamera() }
-        thumb.setOnClickListener { openLastCapture() }
+        shutter.setOnClickListener {
+            if (settings.haptics) shutter.performHapticFeedback(HapticFeedbackConstants.VIRTUAL_KEY)
+            onShutter()
+        }
+        btnSwitch.setOnClickListener { tap(); switchCamera() }
+        thumb.setOnClickListener { tap(); openLastCapture() }
+        zoomRow.dragListener = object : ZoomBar.DragListener {
+            override fun onZoomDragStart() {
+                zoomAnimator?.cancel()
+                zoomDragStart = zoomRatio
+                lastZoomTick = (zoomRatio * 10).roundToInt()
+            }
+            override fun onZoomDrag(totalDx: Float) {
+                val info = camera.currentInfo ?: return
+                val z = (zoomDragStart * exp(totalDx / (150f * dp))).coerceIn(info.minZoom, max(info.minZoom, info.maxZoom))
+                setZoomNow(z)
+                val tick = (z * 10).roundToInt()
+                if (tick != lastZoomTick) {
+                    lastZoomTick = tick
+                    if (settings.haptics && tick % 5 == 0) zoomRow.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                }
+            }
+            override fun onZoomDragEnd() {}
+        }
     }
 
     private fun setupGestures() {
         val scale = ScaleGestureDetector(this, object : ScaleGestureDetector.SimpleOnScaleGestureListener() {
             override fun onScale(detector: ScaleGestureDetector): Boolean {
                 val info = camera.currentInfo ?: return true
-                zoomRatio = (zoomRatio * detector.scaleFactor).coerceIn(info.minZoom, max(info.minZoom, info.maxZoom))
-                camera.setZoom(zoomRatio)
-                refreshLensButtons()
+                zoomAnimator?.cancel()
+                setZoomNow((zoomRatio * detector.scaleFactor).coerceIn(info.minZoom, max(info.minZoom, info.maxZoom)))
                 return true
             }
         })
         val gestures = GestureDetector(this, object : GestureDetector.SimpleOnGestureListener() {
-            override fun onDown(e: MotionEvent): Boolean = true
+            override fun onDown(e: MotionEvent): Boolean {
+                evDragging = false
+                evDragStart = evIndex
+                return true
+            }
+
             override fun onSingleTapUp(e: MotionEvent): Boolean {
-                if (evPanel.visibility == View.VISIBLE) {
-                    setEvPanelVisible(false)
-                    return true
-                }
+                if (hidePopups()) return true
                 focusAt(e.x, e.y, false)
                 return true
             }
+
             override fun onLongPress(e: MotionEvent) {
+                if (evDragging) return
                 focusAt(e.x, e.y, true)
                 if (settings.haptics) root.performHapticFeedback(HapticFeedbackConstants.LONG_PRESS)
             }
-            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
-                if (e1 == null || recorder.isRecording) return false
+
+            override fun onScroll(e1: MotionEvent?, e2: MotionEvent, distanceX: Float, distanceY: Float): Boolean {
+                if (e1 == null) return false
                 val dx = e2.x - e1.x
-                if (abs(dx) > 120 * dp && abs(vx) > abs(vy) * 1.5f) {
+                val dy = e2.y - e1.y
+                // Vertical drag anywhere on the preview = exposure (thumb friendly).
+                if (!evDragging && abs(dy) > 24 * dp && abs(dy) > abs(dx) * 1.5f) evDragging = true
+                if (evDragging) {
+                    val info = camera.currentInfo ?: return true
+                    val r = info.evRange
+                    if (r.lower == r.upper) return true
+                    val steps = r.upper - r.lower
+                    val newIndex = (evDragStart - dy / (260f * dp) * steps).roundToInt().coerceIn(r.lower, r.upper)
+                    if (newIndex != evIndex) {
+                        evIndex = newIndex
+                        camera.setEv(evIndex)
+                        if (settings.haptics && evIndex == 0) root.performHapticFeedback(HapticFeedbackConstants.CLOCK_TICK)
+                    }
+                    overlay.showEv((evIndex - r.lower).toFloat() / steps, "%+.1f".format(evIndex * info.evStep))
+                    return true
+                }
+                return false
+            }
+
+            override fun onFling(e1: MotionEvent?, e2: MotionEvent, vx: Float, vy: Float): Boolean {
+                if (e1 == null || recorder.isRecording || evDragging) return false
+                val dx = e2.x - e1.x
+                if (abs(dx) > 100 * dp && abs(vx) > abs(vy) * 1.5f) {
                     val modes = CaptureMode.values()
                     val i = settings.captureMode.ordinal + if (dx < 0) 1 else -1
                     if (i in modes.indices) setMode(modes[i])
@@ -528,8 +602,76 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         overlay.setOnTouchListener { _, ev ->
             scale.onTouchEvent(ev)
             if (!scale.isInProgress) gestures.onTouchEvent(ev)
+            if (ev.actionMasked == MotionEvent.ACTION_UP || ev.actionMasked == MotionEvent.ACTION_CANCEL) {
+                if (evDragging) refreshUi()
+            }
             true
         }
+    }
+
+    private fun tap() {
+        if (settings.haptics) root.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
+    }
+
+    // ------------------------------------------------------------------ popups
+
+    /** Option strip above the quick bar: all choices visible, one tap to pick. */
+    private fun showOptions(title: String, labels: List<String>, selected: Int, onPick: (Int) -> Unit) {
+        if (optionPanel.visibility == View.VISIBLE && optionTitle.text == title) {
+            hidePopups()
+            return
+        }
+        evPanel.visibility = View.GONE
+        optionTitle.text = title
+        optionRow.removeAllViews()
+        labels.forEachIndexed { i, label ->
+            if (i > 0 && label == labels[i - 1]) return@forEachIndexed
+            val pill = Ui.pill(this, label, i == selected) {
+                tap()
+                onPick(i)
+                main.postDelayed({ hidePopups() }, 120)
+                for (c in 0 until optionRow.childCount) Ui.styleSelected(optionRow.getChildAt(c) as TextView, optionRow.getChildAt(c).tag == i)
+            }
+            pill.tag = i
+            optionRow.addView(pill, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                rightMargin = (8 * dp).toInt()
+            })
+        }
+        popIn(optionPanel)
+        updateBackCallback()
+    }
+
+    private fun popIn(v: View) {
+        v.visibility = View.VISIBLE
+        v.alpha = 0f
+        v.translationY = 16 * dp
+        v.animate().alpha(1f).translationY(0f).setDuration(160).setInterpolator(DecelerateInterpolator()).start()
+    }
+
+    /** Hides option/EV panels. Returns true if something was open. */
+    private fun hidePopups(): Boolean {
+        var any = false
+        for (v in listOf<View>(optionPanel, evPanel)) {
+            if (v.visibility == View.VISIBLE) {
+                any = true
+                v.animate().alpha(0f).translationY(12 * dp).setDuration(120).withEndAction {
+                    v.visibility = View.GONE
+                    updateBackCallback()
+                }.start()
+            }
+        }
+        return any
+    }
+
+    private fun setEvPanelVisible(visible: Boolean) {
+        if (visible) {
+            optionPanel.visibility = View.GONE
+            refreshEvPanel()
+            popIn(evPanel)
+        } else {
+            evPanel.visibility = View.GONE
+        }
+        updateBackCallback()
     }
 
     // ------------------------------------------------------------------ permissions
@@ -574,6 +716,8 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     private fun videoMode() = settings.captureMode != CaptureMode.PHOTO
 
+    private fun currentAspect(): AspectRatio = if (settings.captureMode == CaptureMode.PHOTO) settings.photoAspect else settings.videoAspect
+
     private fun buildSpec(): SessionSpec? {
         val lens = currentLens ?: return null
         val info = infoFor(lens) ?: return null
@@ -617,6 +761,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         if (settings.fps == 60 && spec.fps != 60 && videoMode() && settings.captureMode != CaptureMode.TIMELAPSE) {
             toast("60 fps is not supported by this camera, using 30 fps")
         }
+        curtainIn()
         camera.open(spec) { size -> renderer.prepareInputSurface(size.width, size.height) }
     }
 
@@ -658,6 +803,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         CrashLogger.nonFatal(this, "camera", RuntimeException(message))
         main.post {
             cameraReady = false
+            curtainOut()
             toast(message)
         }
     }
@@ -700,9 +846,10 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             currentLens = f
             settings.useFront = true
         }
+        zoomAnimator?.cancel()
         zoomRatio = currentLens?.zoomRatio ?: 1f
         torchOn = false
-        btnSwitch.animate().rotationBy(180f).setDuration(250).start()
+        btnSwitch.animate().rotationBy(180f).setDuration(300).setInterpolator(DecelerateInterpolator()).start()
         rebuildLensButtons()
         openCamera(force = true)
     }
@@ -710,15 +857,63 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private fun selectLens(lens: LensOption, reopen: Boolean = true) {
         val sameCamera = currentLens?.cameraId == lens.cameraId
         currentLens = lens
-        zoomRatio = lens.zoomRatio
         if (sameCamera) {
-            camera.setZoom(zoomRatio)
-        } else if (reopen) {
-            openCamera(force = true)
+            animateZoomTo(lens.zoomRatio)
         } else {
-            lastSpec = null
+            zoomAnimator?.cancel()
+            zoomRatio = lens.zoomRatio
+            if (reopen) openCamera(force = true) else lastSpec = null
         }
         refreshLensButtons()
+    }
+
+    /** Applies a zoom immediately (pinch / drag). */
+    private fun setZoomNow(z: Float) {
+        zoomRatio = z
+        camera.setZoom(z)
+        refreshLensButtons()
+        overlay.showLabel(formatZoom(z))
+    }
+
+    /** Smooth zoom transition between lens presets. */
+    private fun animateZoomTo(target: Float) {
+        zoomAnimator?.cancel()
+        val from = zoomRatio
+        zoomAnimator = ValueAnimator.ofFloat(from, target).apply {
+            duration = 260
+            interpolator = DecelerateInterpolator()
+            addUpdateListener {
+                zoomRatio = it.animatedValue as Float
+                camera.setZoom(zoomRatio)
+                refreshLensButtons()
+            }
+            start()
+        }
+        overlay.showLabel(formatZoom(target))
+    }
+
+    private fun formatZoom(z: Float): String {
+        val r = (z * 10).roundToInt() / 10f
+        return if (r == floor(r)) "${r.toInt()}×" else "$r×"
+    }
+
+    // ------------------------------------------------------------------ smooth transitions
+
+    private val curtainTimeout = Runnable { curtainOut() }
+
+    private fun curtainIn() {
+        curtain.animate().cancel()
+        curtain.visibility = View.VISIBLE
+        curtain.animate().alpha(1f).setDuration(120).start()
+        main.removeCallbacks(curtainTimeout)
+        main.postDelayed(curtainTimeout, 3000)
+    }
+
+    private fun curtainOut() {
+        main.removeCallbacks(curtainTimeout)
+        if (curtain.visibility != View.VISIBLE) return
+        curtain.animate().cancel()
+        curtain.animate().alpha(0f).setDuration(260).withEndAction { curtain.visibility = View.GONE }.start()
     }
 
     // ------------------------------------------------------------------ render config & preview area
@@ -734,12 +929,14 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             lockMode = settings.lockMode,
             levelRange = settings.levelRange.toDouble(),
             orientation = settings.frameOrientation,
-            aspect = if (photo) settings.photoAspect.ratio else settings.videoAspect.ratio,
+            aspect = currentAspect().ratio,
             outShort = if (photo) 1080 else settings.videoQuality.shortSide,
             smooth = smooth,
             previewStyle = settings.previewStyle,
             grid = settings.grid,
-            mirrorFront = settings.mirrorFront
+            mirrorFront = settings.mirrorFront,
+            sharpness = when (settings.sharpness) { 0 -> 0.0; 2 -> 0.55; else -> 0.3 },
+            dynamicCrop = photo
         )
         overlay.showLevel = settings.levelIndicator
         overlay.lockActive = settings.lockMode != LockMode.OFF
@@ -758,9 +955,10 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         val w = root.width.toFloat()
         val h = root.height.toFloat()
         if (w <= 0 || h <= 0) return
-        val topLimit = (topBar.bottom.takeIf { it > 0 } ?: (insetTop + (60 * dp).toInt())).toFloat()
-        val controlsTop = (bottomPanel.top + bottomPanel.height - insetBottom - (12 * dp) - (96 * dp))
-        val bottomLimit = if (controlsTop > topLimit) controlsTop else h
+        val topLimit = insetTop.toFloat()
+        // Preview sits above the quick bar; the controls below stay on solid black.
+        val barTop = bottomPanel.top + quickBar.top
+        val bottomLimit = if (barTop > topLimit + 100 * dp) barTop.toFloat() else h
         val area: RectF
         if (settings.previewStyle == PreviewStyle.GIMBAL) {
             val info = sessionInfo
@@ -770,11 +968,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             val aspect = if (HorizonMath.isQuarterTurn(disp)) nd[0].toFloat() / nd[1] else nd[1].toFloat() / nd[0]
             val imgH = w * aspect
             val avail = bottomLimit - topLimit
-            val top = when {
-                imgH <= avail -> topLimit + (avail - imgH) / 2f
-                imgH <= bottomLimit - insetTop -> bottomLimit - imgH
-                else -> max(0f, (h - imgH) / 2f)
-            }
+            val top = if (imgH <= avail) topLimit + (avail - imgH) / 2f else max(0f, bottomLimit - imgH)
             area = RectF(0f, top, w, top + imgH)
         } else {
             area = RectF(0f, topLimit, w, bottomLimit)
@@ -787,6 +981,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     // ------------------------------------------------------------------ capture
 
     private fun onShutter() {
+        hidePopups()
         if (countdownLeft > 0) {
             cancelCountdown()
             return
@@ -801,6 +996,8 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                 if (recorder.isRecording) stopRecording() else withTimer { startRecording() }
         }
     }
+
+    private var countdownRunnable: Runnable? = null
 
     private fun withTimer(action: () -> Unit) {
         val secs = settings.timerSec
@@ -830,8 +1027,6 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         main.postDelayed(tick, 1000)
         countdownRunnable = tick
     }
-
-    private var countdownRunnable: Runnable? = null
 
     private fun cancelCountdown() {
         countdownRunnable?.let { main.removeCallbacks(it) }
@@ -979,7 +1174,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private fun bounceThumb() {
         thumb.scaleX = 0.6f
         thumb.scaleY = 0.6f
-        thumb.animate().scaleX(1f).scaleY(1f).setDuration(220).start()
+        thumb.animate().scaleX(1f).scaleY(1f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
     }
 
     private fun loadThumbnailFor(uri: Uri?, video: Boolean) {
@@ -987,7 +1182,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         worker.execute {
             val bmp: Bitmap? = try {
                 if (Build.VERSION.SDK_INT >= 29) {
-                    contentResolver.loadThumbnail(uri, android.util.Size(240, 240), null)
+                    contentResolver.loadThumbnail(uri, Size(240, 240), null)
                 } else if (video) {
                     val r = MediaMetadataRetriever()
                     try {
@@ -1030,10 +1225,12 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     private fun setMode(mode: CaptureMode) {
         if (recorder.isRecording || settings.captureMode == mode) return
+        tap()
         cancelCountdown()
+        hidePopups()
         settings.captureMode = mode
         shutter.mode = mode
-        if (mode == CaptureMode.TIMELAPSE) toast("Time-lapse ${settings.timelapseSpeed}× — no sound")
+        if (mode == CaptureMode.TIMELAPSE) toast("Time-lapse ${settings.timelapseSpeed}× (no sound)")
         reconfigure()
     }
 
@@ -1053,13 +1250,15 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             if (abs(HorizonMath.wrapDeg((target - uiRotation).toDouble())) > 1) {
                 val delta = HorizonMath.wrapDeg((target - uiRotation).toDouble()).toFloat()
                 uiRotation += delta
-                for (v in rotatingViews()) v.animate().rotation(uiRotation).setDuration(280).start()
+                for (v in rotatingViews()) {
+                    v.animate().rotation(uiRotation).setDuration(300).setInterpolator(DecelerateInterpolator()).start()
+                }
                 overlay.uiRotation = uiRotation
             }
         }
         if (recorder.isRecording) {
             val ms = recorder.elapsedMs
-            var t = formatTime(ms)
+            var t = "● " + formatTime(ms)
             if (settings.captureMode == CaptureMode.TIMELAPSE) t += "  ▸ " + formatTime(recorder.lastPtsNs / 1_000_000L)
             recTime.text = t
         }
@@ -1068,7 +1267,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     }
 
     private fun rotatingViews(): List<View> {
-        val list = mutableListOf<View>(btnSettings, chipLock, chipFrame, btnTorch, btnTimer, btnEv, thumb, btnSwitch, toastView)
+        val list = mutableListOf<View>(qSettings, qLock, qFrame, qTorch, qTimer, qAdjust, thumb, btnSwitch, toastView)
         for (i in 0 until zoomRow.childCount) list.add(zoomRow.getChildAt(i))
         return list
     }
@@ -1078,17 +1277,19 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         return if (s >= 3600) "%d:%02d:%02d".format(s / 3600, (s / 60) % 60, s % 60) else "%02d:%02d".format(s / 60, s % 60)
     }
 
-    private fun infoLine(st: com.darshan.horizoncam.gl.RenderState?): String {
+    private fun infoLine(st: RenderState?): String {
         val sb = StringBuilder()
         when (settings.captureMode) {
-            CaptureMode.PHOTO -> sb.append("PHOTO ").append(settings.photoAspect.label)
-            CaptureMode.VIDEO -> sb.append(settings.videoQuality.label).append(sessionFps)
-            CaptureMode.TIMELAPSE -> sb.append(settings.videoQuality.label).append(" · ").append(settings.timelapseSpeed).append("×")
+            CaptureMode.PHOTO -> sb.append("Photo ").append(settings.photoAspect.label)
+            CaptureMode.VIDEO -> sb.append(settings.videoQuality.label).append(" ").append(sessionFps).append("fps")
+            CaptureMode.TIMELAPSE -> sb.append(settings.videoQuality.label).append(" · ").append(settings.timelapseSpeed).append("× lapse")
         }
-        if (st != null) {
-            if (settings.lockMode != LockMode.OFF) sb.append(" · crop ").append("%.1f×".format(st.cropZoom))
-            if (zoomRatio != 1f) sb.append(" · zoom ").append("%.1f×".format(zoomRatio))
-        }
+        sb.append(" · ").append(when (settings.lockMode) {
+            LockMode.LOCK_360 -> "360° lock"
+            LockMode.LEVEL -> "Level"
+            LockMode.OFF -> "Lock off"
+        })
+        if (st != null && st.unstable && settings.lockMode != LockMode.OFF) sb.append(" (paused)")
         if (iso > 0 && exposureNs > 0) {
             sb.append(" · ISO ").append(iso)
             val inv = 1_000_000_000.0 / exposureNs
@@ -1099,8 +1300,16 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     private fun lockDescription(): String = when (settings.lockMode) {
         LockMode.LOCK_360 -> "360° Horizon Lock: stays level through any rotation"
-        LockMode.LEVEL -> "Auto Level: fixes tilt up to ±${settings.levelRange}°, less crop"
+        LockMode.LEVEL -> "Auto Level: fixes tilt up to ±${settings.levelRange}° with less crop"
         LockMode.OFF -> "Horizon lock off"
+    }
+
+    private fun setQuick(v: TextView, icon: Int, label: String, active: Boolean) {
+        v.text = label
+        v.setCompoundDrawablesRelativeWithIntrinsicBounds(0, icon, 0, 0)
+        val color = if (active) Ui.ACCENT else 0xFFFFFFFF.toInt()
+        v.setTextColor(color)
+        v.compoundDrawableTintList = ColorStateList.valueOf(color)
     }
 
     private fun refreshUi() {
@@ -1112,33 +1321,38 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             v.setBackgroundResource(if (sel) R.drawable.bg_mode_selected else 0)
         }
         when (settings.lockMode) {
-            LockMode.LOCK_360 -> { chipLock.text = "360°"; chipLock.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_360, 0, 0, 0) }
-            LockMode.LEVEL -> { chipLock.text = "±${settings.levelRange}°"; chipLock.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_straighten, 0, 0, 0) }
-            LockMode.OFF -> { chipLock.text = "OFF"; chipLock.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_lock_open, 0, 0, 0) }
+            LockMode.LOCK_360 -> setQuick(qLock, R.drawable.ic_360, "360°", true)
+            LockMode.LEVEL -> setQuick(qLock, R.drawable.ic_straighten, "±${settings.levelRange}°", true)
+            LockMode.OFF -> setQuick(qLock, R.drawable.ic_lock_open, "Lock off", false)
         }
-        val aspect = if (mode == CaptureMode.PHOTO) settings.photoAspect else settings.videoAspect
+        val aspect = currentAspect()
         val square = aspect == AspectRatio.R1_1
         when (settings.frameOrientation) {
-            FrameOrientation.AUTO -> { chipFrame.text = if (square) "1:1" else "AUTO"; chipFrame.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_orientation_auto, 0, 0, 0) }
-            FrameOrientation.LANDSCAPE -> { chipFrame.text = if (square) "1:1" else aspect.label; chipFrame.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_crop_landscape, 0, 0, 0) }
+            FrameOrientation.AUTO -> setQuick(qFrame, R.drawable.ic_orientation_auto, if (square) "1:1" else "Auto", false)
+            FrameOrientation.LANDSCAPE -> setQuick(qFrame, R.drawable.ic_crop_landscape, if (square) "1:1" else aspect.label, true)
             FrameOrientation.PORTRAIT -> {
                 val parts = aspect.label.split(":")
-                chipFrame.text = if (square) "1:1" else "${parts[1]}:${parts[0]}"
-                chipFrame.setCompoundDrawablesRelativeWithIntrinsicBounds(R.drawable.ic_crop_portrait, 0, 0, 0)
+                setQuick(qFrame, R.drawable.ic_crop_portrait, if (square) "1:1" else "${parts[1]}:${parts[0]}", true)
             }
         }
-        btnTorch.setImageResource(if (torchOn) R.drawable.ic_flashlight_on else R.drawable.ic_flashlight_off)
-        btnTorch.imageTintList = android.content.res.ColorStateList.valueOf(if (torchOn) getColor(R.color.accent) else 0xFFFFFFFF.toInt())
-        btnTimer.setImageResource(when (settings.timerSec) { 3 -> R.drawable.ic_timer_3; 10 -> R.drawable.ic_timer_10; else -> R.drawable.ic_timer_off })
-        btnEv.imageTintList = android.content.res.ColorStateList.valueOf(
-            if (evIndex != 0 || wb != WbPreset.AUTO) getColor(R.color.accent) else 0xFFFFFFFF.toInt()
+        setQuick(qTorch, if (torchOn) R.drawable.ic_flashlight_on else R.drawable.ic_flashlight_off, if (torchOn) "On" else "Light", torchOn)
+        setQuick(
+            qTimer,
+            when (settings.timerSec) { 3 -> R.drawable.ic_timer_3; 10 -> R.drawable.ic_timer_10; else -> R.drawable.ic_timer_off },
+            if (settings.timerSec == 0) "Timer" else "${settings.timerSec}s",
+            settings.timerSec != 0
         )
+        val evStep = camera.currentInfo?.evStep ?: 0f
+        val adjusted = evIndex != 0 || wb != WbPreset.AUTO
+        setQuick(qAdjust, R.drawable.ic_tune, if (evIndex != 0) "%+.1f".format(evIndex * evStep) else "Adjust", adjusted)
+        setQuick(qSettings, R.drawable.ic_settings, "More", false)
+
         val rec = recorder.isRecording
         recTime.visibility = if (rec) View.VISIBLE else View.GONE
         val enabled = !rec
-        for (v in listOf<View>(btnSettings, chipLock, chipFrame, btnSwitch, modePhoto, modeVideo, modeTimelapse, thumb)) {
+        for (v in listOf<View>(qSettings, qLock, qFrame, btnSwitch, modePhoto, modeVideo, modeTimelapse, thumb)) {
             v.isEnabled = enabled
-            v.alpha = if (enabled) 1f else 0.35f
+            v.animate().alpha(if (enabled) 1f else 0.3f).setDuration(150).start()
         }
         btnSwitch.visibility = if (frontLens != null && backLenses.isNotEmpty()) View.VISIBLE else View.INVISIBLE
         refreshLensButtons()
@@ -1158,13 +1372,17 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         for (lens in lenses) {
             val tv = TextView(this).apply {
                 gravity = Gravity.CENTER
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
+                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f)
                 setTextColor(0xFFFFFFFF.toInt())
-                typeface = android.graphics.Typeface.DEFAULT_BOLD
+                typeface = android.graphics.Typeface.create("sans-serif-medium", android.graphics.Typeface.NORMAL)
                 tag = lens
-                setOnClickListener { if (!recorder.isRecording || lens.cameraId == currentLens?.cameraId) selectLens(lens) }
+                setOnClickListener {
+                    if (recorder.isRecording && lens.cameraId != currentLens?.cameraId) return@setOnClickListener
+                    tap()
+                    selectLens(lens)
+                }
             }
-            val lp = LinearLayout.LayoutParams((38 * dp).toInt(), (38 * dp).toInt())
+            val lp = LinearLayout.LayoutParams((40 * dp).toInt(), (40 * dp).toInt())
             lp.setMargins((2 * dp).toInt(), 0, (2 * dp).toInt(), 0)
             zoomRow.addView(tv, lp)
         }
@@ -1189,10 +1407,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             val sel = v === nearest
             v.setBackgroundResource(if (sel) R.drawable.bg_lens else 0)
             v.setTextColor(if (sel) getColor(R.color.accent) else 0xFFFFFFFF.toInt())
-            v.text = if (sel && abs(zoomRatio - lens.zoomRatio) > 0.05f && lens.cameraId == cur?.cameraId) {
-                val z = (zoomRatio * 10).roundToInt() / 10f
-                if (z == z.toInt().toFloat()) "${z.toInt()}×" else "$z×"
-            } else lens.label
+            v.text = if (sel && abs(zoomRatio - lens.zoomRatio) > 0.05f && lens.cameraId == cur?.cameraId) formatZoom(zoomRatio) else lens.label
         }
     }
 
@@ -1201,20 +1416,18 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private fun buildWbRow() {
         wbRow.removeAllViews()
         for (p in WbPreset.values()) {
-            val tv = TextView(this).apply {
-                text = p.label
-                gravity = Gravity.CENTER
-                setTextSize(TypedValue.COMPLEX_UNIT_SP, 12f)
-                setPadding((8 * dp).toInt(), (6 * dp).toInt(), (8 * dp).toInt(), (6 * dp).toInt())
-                tag = p
-                setOnClickListener {
-                    wb = p
-                    camera.setWhiteBalance(p)
-                    refreshEvPanel()
-                    refreshUi()
-                }
+            val pill = Ui.pill(this, p.label, p == wb) {
+                tap()
+                wb = p
+                camera.setWhiteBalance(p)
+                refreshEvPanel()
+                refreshUi()
             }
-            wbRow.addView(tv, LinearLayout.LayoutParams(0, LinearLayout.LayoutParams.WRAP_CONTENT, 1f))
+            pill.tag = p
+            wbRow.addView(pill, LinearLayout.LayoutParams(LinearLayout.LayoutParams.WRAP_CONTENT, LinearLayout.LayoutParams.WRAP_CONTENT).apply {
+                rightMargin = (8 * dp).toInt()
+                topMargin = (4 * dp).toInt()
+            })
         }
     }
 
@@ -1225,16 +1438,14 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             evSeek.max = info.evRange.upper - info.evRange.lower
             evSeek.progress = evIndex - info.evRange.lower
             val ev = evIndex * info.evStep
-            evLabel.text = "Exposure %+.1f EV   (tap to reset)".format(ev)
+            evLabel.text = "Exposure %+.1f EV   ·   tap to reset   ·   tip: swipe up/down on the preview".format(ev)
         } else {
             evSeek.isEnabled = false
             evLabel.text = "Exposure compensation not supported"
         }
         for (i in 0 until wbRow.childCount) {
             val v = wbRow.getChildAt(i) as TextView
-            val sel = v.tag == wb
-            v.setTextColor(if (sel) getColor(R.color.accent) else 0xFFFFFFFF.toInt())
-            v.setBackgroundResource(if (sel) R.drawable.bg_mode_selected else 0)
+            Ui.styleSelected(v, v.tag == wb)
         }
     }
 
@@ -1242,19 +1453,21 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     private fun openSettings() {
         if (recorder.isRecording) return
-        val panel = settingsPanel ?: SettingsPanel(this) { closeSettings() }.also {
-            settingsPanel = it
-            settingsHost.addView(it)
-        }
-        panel.setContent(settingRows())
+        hidePopups()
+        settingsHost.removeAllViews()
+        val sheet = SettingsSheet(this) { closeSettings() }
+        settingsSheet = sheet
+        settingsHost.addView(sheet, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
+        sheet.setContent(settingRows())
         settingsHost.visibility = View.VISIBLE
-        settingsHost.alpha = 0f
-        settingsHost.animate().alpha(1f).setDuration(150).start()
+        sheet.show()
         updateBackCallback()
     }
 
     private fun closeSettings() {
         settingsHost.visibility = View.GONE
+        settingsHost.removeAllViews()
+        settingsSheet = null
         updateBackCallback()
         rebuildLensButtons()
         reconfigure()
@@ -1267,45 +1480,46 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         val H = "Horizon lock"
         rows += SettingRow(H, "Lock mode", "360° keeps the horizon level through any rotation. Auto Level fixes smaller tilts with less crop.",
             listOf("360° Lock", "Auto Level", "Off"), { settings.lockMode.ordinal }, { settings.lockMode = LockMode.values()[it]; onLockModeChanged() })
-        rows += SettingRow(H, "Auto Level range", "Largest tilt Auto Level corrects. Larger range means more crop.",
+        rows += SettingRow(H, "Auto Level range", "Largest tilt Auto Level corrects. A larger range crops more.",
             ranges.map { "±$it°" }, { ranges.indexOf(settings.levelRange).coerceAtLeast(0) }, { settings.levelRange = ranges[it] },
             { settings.lockMode == LockMode.LEVEL })
-        rows += SettingRow(H, "Frame orientation", "Auto picks landscape or portrait from how you hold the phone when you start recording.",
-            FrameOrientation.values().map { it.label }, { settings.frameOrientation.ordinal }, { settings.frameOrientation = FrameOrientation.values()[it] })
-        rows += SettingRow(H, "Stabilization", "Steady uses the camera's own stabilization as well. Lock only gives the most rigid horizon.",
+        rows += SettingRow(H, "Recording frame", "Auto picks landscape or portrait from how you hold the phone when you start.",
+            listOf("Auto", "Landscape", "Portrait"), { settings.frameOrientation.ordinal }, { settings.frameOrientation = FrameOrientation.values()[it] })
+        rows += SettingRow(H, "Stabilization", "Steady adds the camera's own stabilization. Lock only gives the most rigid horizon and the sharpest image.",
             listOf("Steady", "Lock only"), { if (settings.cameraStabilization) 0 else 1 }, { settings.cameraStabilization = it == 0 })
         rows += SettingRow(H, "Lock response", "Auto is smooth with Steady and rigid with Lock only.",
             listOf("Auto", "Rigid", "Smooth"), { settings.response }, { settings.response = it })
-        rows += SettingRow(H, "Ultra-wide for 360°", "Switches to the widest lens in 360° mode to make up for the crop.",
-            listOf("On", "Off"), { if (settings.preferUltraWide) 0 else 1 }, { settings.preferUltraWide = it == 0 })
-        rows += SettingRow(H, "Preview", "Gimbal view shows the full camera view with the level recording frame. Output view shows exactly what is saved.",
-            PreviewStyle.values().map { it.label }, { settings.previewStyle.ordinal }, { settings.previewStyle = PreviewStyle.values()[it] })
+        rows += SettingRow(H, "Ultra-wide in 360°", "Wider view to make up for the crop, but less detail than the main camera.",
+            listOf("Off", "On"), { if (settings.preferUltraWide) 1 else 0 }, { settings.preferUltraWide = it == 1 })
+        rows += SettingRow(H, "Preview", "Gimbal view shows the whole camera view with the level recording frame. Output view shows exactly what is saved.",
+            listOf("Gimbal view", "Output view"), { settings.previewStyle.ordinal }, { settings.previewStyle = PreviewStyle.values()[it] })
 
         val V = "Video"
-        rows += SettingRow(V, "Resolution", "Output resolution. The camera input is picked so the crop still has full detail where possible.",
-            VideoQuality.values().map { it.label }, { settings.videoQuality.ordinal }, { settings.videoQuality = VideoQuality.values()[it] })
+        rows += SettingRow(V, "Resolution", "", VideoQuality.values().map { it.label }, { settings.videoQuality.ordinal }, { settings.videoQuality = VideoQuality.values()[it] })
         rows += SettingRow(V, "Frame rate", "", listOf("30 fps", "60 fps"), { if (settings.fps == 60) 1 else 0 }, { settings.fps = if (it == 1) 60 else 30 })
         rows += SettingRow(V, "Aspect ratio", "", AspectRatio.values().map { it.label }, { settings.videoAspect.ordinal }, { settings.videoAspect = AspectRatio.values()[it] })
-        rows += SettingRow(V, "Codec", "HEVC gives smaller files. H.264 plays everywhere.", listOf("H.264", "HEVC"), { if (settings.hevc) 1 else 0 }, { settings.hevc = it == 1 })
-        rows += SettingRow(V, "Bitrate", "", listOf("Standard", "High"), { if (settings.highBitrate) 1 else 0 }, { settings.highBitrate = it == 1 })
+        rows += SettingRow(V, "Codec", "HEVC gives smaller files at the same quality. H.264 plays everywhere.", listOf("H.264", "HEVC"), { if (settings.hevc) 1 else 0 }, { settings.hevc = it == 1 })
+        rows += SettingRow(V, "Bitrate", "High keeps more fine detail in busy scenes.", listOf("Standard", "High"), { if (settings.highBitrate) 1 else 0 }, { settings.highBitrate = it == 1 })
         rows += SettingRow(V, "Record audio", "", listOf("On", "Off"), { if (settings.recordAudio) 0 else 1 }, { settings.recordAudio = it == 0 })
         rows += SettingRow(V, "Time-lapse speed", "How much faster the time-lapse plays than real time.",
             speeds.map { "$it×" }, { speeds.indexOf(settings.timelapseSpeed).coerceAtLeast(0) }, { settings.timelapseSpeed = speeds[it] })
 
-        val P = "Photo"
-        rows += SettingRow(P, "Photo aspect ratio", "Photos are leveled using the exact moment of exposure.",
+        val Q = "Image quality"
+        rows += SettingRow(Q, "Sharpness", "Restores detail after the horizon is rotated. Crisp suits landscapes; Off is the most natural.",
+            listOf("Off", "Natural", "Crisp"), { settings.sharpness }, { settings.sharpness = it })
+        rows += SettingRow(Q, "Photo aspect ratio", "Photos are straightened for the exact moment of capture and cropped only as much as needed.",
             AspectRatio.values().map { it.label }, { settings.photoAspect.ordinal }, { settings.photoAspect = AspectRatio.values()[it] })
 
-        val G = "General"
+        val G = "Controls"
         rows += SettingRow(G, "Grid", "", listOf("Off", "3×3"), { if (settings.grid) 1 else 0 }, { settings.grid = it == 1 })
         rows += SettingRow(G, "Level indicator", "", listOf("On", "Off"), { if (settings.levelIndicator) 0 else 1 }, { settings.levelIndicator = it == 0 })
         rows += SettingRow(G, "Volume keys", "", VolumeAction.values().map { it.label }, { settings.volumeAction.ordinal }, { settings.volumeAction = VolumeAction.values()[it] })
         rows += SettingRow(G, "Shutter sound", "", listOf("On", "Off"), { if (settings.shutterSound) 0 else 1 }, { settings.shutterSound = it == 0 })
-        rows += SettingRow(G, "Haptics", "Vibrates when the phone is level.", listOf("On", "Off"), { if (settings.haptics) 0 else 1 }, { settings.haptics = it == 0 })
+        rows += SettingRow(G, "Haptics", "Gentle vibrations for taps, zoom steps and when the phone is level.", listOf("On", "Off"), { if (settings.haptics) 0 else 1 }, { settings.haptics = it == 0 })
         rows += SettingRow(G, "Mirror front camera", "Save selfies as shown in the preview.", listOf("Off", "On"), { if (settings.mirrorFront) 1 else 0 }, { settings.mirrorFront = it == 1 })
 
         val A = "About"
-        rows += ActionRow(A, "How Horizon Lock works", "Quick tips") { showWelcome() }
+        rows += ActionRow(A, "How to use HorizonCam", "Gestures and tips") { showWelcome() }
         rows += ActionRow(A, "Camera diagnostics", "Device and camera details to copy into a bug report") { showDiagnostics() }
         rows += ActionRow(A, "Last crash report", if (CrashLogger.lastCrash(this) != null) "A crash was recorded. Tap to view." else "No crashes recorded") {
             val c = CrashLogger.lastCrash(this)
@@ -1342,7 +1556,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     private fun showCrashDialog(text: String) {
         dialogBuilder()
-            .setTitle("HorizonCam crashed last time")
+            .setTitle("Last crash report")
             .setMessage(text.take(4000))
             .setPositiveButton("Copy") { _, _ -> copyText("crash", text) }
             .setNeutralButton("Clear") { _, _ -> CrashLogger.clear(this) }
@@ -1357,8 +1571,8 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         sb.append("Android ${Build.VERSION.RELEASE} (SDK ${Build.VERSION.SDK_INT})\n")
         sb.append("Motion sensor: ${sensor.sensorName}\n")
         val st = renderer.state
-        sb.append("Session: input=${sessionInput?.let { "${it.width}x${it.height}" }} fps=$sessionFps preview=${st?.fps?.let { "%.1f".format(it) }}\n")
-        sb.append("Frame: ${st?.frameW}x${st?.frameH} crop=${st?.cropZoom?.let { "%.2f".format(it) }} roll=${st?.rollDeg?.let { "%.1f".format(it) }}\n")
+        sb.append("Session: camera=${sessionInfo?.id} input=${sessionInput?.let { "${it.width}x${it.height}" }} fps=$sessionFps preview=${st?.fps?.let { "%.1f".format(it) }}\n")
+        sb.append("Frame: ${st?.frameW}x${st?.frameH} crop=${st?.cropZoom?.let { "%.2f".format(it) }} roll=${st?.rollDeg?.let { "%.1f".format(it) }} zoom=$zoomRatio\n")
         sb.append("Encoders: AVC=${EncoderSupport.hasEncoder(MediaFormat.MIMETYPE_VIDEO_AVC)} HEVC=${EncoderSupport.hasEncoder(MediaFormat.MIMETYPE_VIDEO_HEVC)}\n")
         sb.append("Lenses: ${backLenses.joinToString { "${it.label}@${it.cameraId}/${it.zoomRatio}" }} front=${frontLens?.cameraId}\n\n")
         for (c in cameras) sb.append(c.describe()).append('\n')
@@ -1401,9 +1615,8 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                 VolumeAction.ZOOM -> {
                     val info = camera.currentInfo ?: return true
                     val f = if (keyCode == KeyEvent.KEYCODE_VOLUME_UP) 1.1f else 1 / 1.1f
-                    zoomRatio = (zoomRatio * f).coerceIn(info.minZoom, max(info.minZoom, info.maxZoom))
-                    camera.setZoom(zoomRatio)
-                    refreshLensButtons()
+                    zoomAnimator?.cancel()
+                    setZoomNow((zoomRatio * f).coerceIn(info.minZoom, max(info.minZoom, info.maxZoom)))
                     return true
                 }
                 VolumeAction.OFF -> {}

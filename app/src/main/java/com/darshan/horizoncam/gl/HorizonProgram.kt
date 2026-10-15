@@ -22,6 +22,10 @@ class HorizonProgram {
     private val uBorder: Int
     private val uGrid: Int
     private val uBorderColor: Int
+    private val uDx: Int
+    private val uDy: Int
+    private val uTaps: Int
+    private val uSharpen: Int
     private val sTex: Int
 
     private val quad: FloatBuffer = ByteBuffer.allocateDirect(8 * 4).order(ByteOrder.nativeOrder()).asFloatBuffer().apply {
@@ -39,6 +43,10 @@ class HorizonProgram {
         uBorder = GLES20.glGetUniformLocation(program, "uBorder")
         uGrid = GLES20.glGetUniformLocation(program, "uGrid")
         uBorderColor = GLES20.glGetUniformLocation(program, "uBorderColor")
+        uDx = GLES20.glGetUniformLocation(program, "uDx")
+        uDy = GLES20.glGetUniformLocation(program, "uDy")
+        uTaps = GLES20.glGetUniformLocation(program, "uTaps")
+        uSharpen = GLES20.glGetUniformLocation(program, "uSharpen")
         sTex = GLES20.glGetUniformLocation(program, "sTex")
     }
 
@@ -53,6 +61,13 @@ class HorizonProgram {
         var borderR = 1f
         var borderG = 1f
         var borderB = 1f
+        /** Texture-space step of one output pixel along x / y (for anti-aliasing and sharpening). */
+        val dx = FloatArray(2)
+        val dy = FloatArray(2)
+        /** 1 = single bilinear tap, 2 = 2x2 supersampling, 3 = 3x3 supersampling. */
+        var taps = 1f
+        /** Unsharp-mask strength (0 = off). */
+        var sharpen = 0f
     }
 
     fun draw(textureId: Int, texMatrix: FloatArray, p: Params) {
@@ -68,6 +83,10 @@ class HorizonProgram {
         GLES20.glUniform1f(uBorder, p.border)
         GLES20.glUniform1f(uGrid, p.grid)
         GLES20.glUniform3f(uBorderColor, p.borderR, p.borderG, p.borderB)
+        GLES20.glUniform2f(uDx, p.dx[0], p.dx[1])
+        GLES20.glUniform2f(uDy, p.dy[0], p.dy[1])
+        GLES20.glUniform1f(uTaps, p.taps)
+        GLES20.glUniform1f(uSharpen, p.sharpen)
         GLES20.glEnableVertexAttribArray(aPos)
         GLES20.glVertexAttribPointer(aPos, 2, GLES20.GL_FLOAT, false, 8, quad)
         GLES20.glDrawArrays(GLES20.GL_TRIANGLE_STRIP, 0, 4)
@@ -110,11 +129,45 @@ uniform vec2 uLine;
 uniform float uBorder;
 uniform float uGrid;
 uniform vec3 uBorderColor;
+uniform vec2 uDx;
+uniform vec2 uDy;
+uniform float uTaps;
+uniform float uSharpen;
 varying vec2 vTex;
 varying vec2 vNat;
 varying vec2 vFrame;
+
+// Box-filtered sample over the output pixel's footprint: removes the aliasing/shimmer of
+// plain bilinear sampling when a large camera frame is scaled down and rotated.
+vec3 footprint(vec2 tc) {
+    if (uTaps < 1.5) {
+        return texture2D(sTex, tc).rgb;
+    }
+    if (uTaps < 2.5) {
+        vec2 a = 0.25 * uDx;
+        vec2 b = 0.25 * uDy;
+        return 0.25 * (texture2D(sTex, tc + a + b).rgb + texture2D(sTex, tc + a - b).rgb
+                     + texture2D(sTex, tc - a + b).rgb + texture2D(sTex, tc - a - b).rgb);
+    }
+    vec2 a3 = uDx / 3.0;
+    vec2 b3 = uDy / 3.0;
+    vec3 acc = vec3(0.0);
+    for (int i = -1; i <= 1; i++) {
+        for (int j = -1; j <= 1; j++) {
+            acc += texture2D(sTex, tc + float(i) * a3 + float(j) * b3).rgb;
+        }
+    }
+    return acc / 9.0;
+}
+
 void main() {
-    vec3 col = texture2D(sTex, vTex).rgb;
+    vec3 col = footprint(vTex);
+    if (uSharpen > 0.0) {
+        // Gentle unsharp mask at one output pixel radius restores detail lost to resampling.
+        vec3 blur = 0.25 * (texture2D(sTex, vTex + uDx).rgb + texture2D(sTex, vTex - uDx).rgb
+                          + texture2D(sTex, vTex + uDy).rgb + texture2D(sTex, vTex - uDy).rgb);
+        col = clamp(col + uSharpen * (col - blur), 0.0, 1.0);
+    }
     float inImg = step(0.0, vNat.x) * step(vNat.x, 1.0) * step(0.0, vNat.y) * step(vNat.y, 1.0);
     col *= inImg;
     vec2 a = abs(vFrame);
@@ -127,7 +180,7 @@ void main() {
     float g2 = step(abs(a.y - 0.333333), uLine.y * 0.6);
     float grid = max(g1, g2) * inside * uGrid;
     col = mix(col, vec3(1.0), grid * 0.45);
-    col = mix(col, uBorderColor, border);
+    col = mix(col, uBorderColor, border * 0.85);
     gl_FragColor = vec4(col, 1.0);
 }
 """

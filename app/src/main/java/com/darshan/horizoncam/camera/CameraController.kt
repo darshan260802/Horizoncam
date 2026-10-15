@@ -87,6 +87,8 @@ class CameraController(private val manager: CameraManager, private val listener:
     private var focusPoint: FloatArray? = null
     private var awaitingFocus = false
     private var photoCallback: PhotoCallback? = null
+    /** High-quality ISP processing; turned off automatically if it costs frame rate. */
+    private var hqProcessing = true
 
     private val resetFocusRunnable = Runnable { clearFocusInternal() }
 
@@ -175,6 +177,11 @@ class CameraController(private val manager: CameraManager, private val listener:
         meteringRegion = null
         focusPoint = null
         aeAfLocked = false
+        hqProcessing = true
+        fpsWindowStart = 0L
+        fpsWindowFrames = 0
+        fpsSlowWindows = 0
+        framesSinceStart = 0
         opening = true
         try {
             manager.openCamera(s.cameraId, object : CameraDevice.StateCallback() {
@@ -336,9 +343,32 @@ class CameraController(private val manager: CameraManager, private val listener:
         } else {
             b.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
         }
+        // Image processing: best quality for video at <= 30 fps and for stills.
+        val still = template == CameraDevice.TEMPLATE_STILL_CAPTURE
+        applyProcessing(b, ci, still || (s.video && s.fps <= 30 && hqProcessing))
         // Zoom
         applyZoom(b, ci)
         return b
+    }
+
+    private fun applyProcessing(b: CaptureRequest.Builder, ci: CameraInfo, hq: Boolean) {
+        fun pick(modes: IntArray, high: Int, fast: Int): Int? = when {
+            hq && modes.contains(high) -> high
+            modes.contains(fast) -> fast
+            else -> null
+        }
+        pick(ci.noiseModes, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY, CameraMetadata.NOISE_REDUCTION_MODE_FAST)
+            ?.let { b.set(CaptureRequest.NOISE_REDUCTION_MODE, it) }
+        pick(ci.edgeModes, CameraMetadata.EDGE_MODE_HIGH_QUALITY, CameraMetadata.EDGE_MODE_FAST)
+            ?.let { b.set(CaptureRequest.EDGE_MODE, it) }
+        pick(ci.aberrationModes, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_FAST)
+            ?.let { b.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, it) }
+        pick(ci.hotPixelModes, CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY, CameraMetadata.HOT_PIXEL_MODE_FAST)
+            ?.let { b.set(CaptureRequest.HOT_PIXEL_MODE, it) }
+        pick(ci.shadingModes, CameraMetadata.SHADING_MODE_HIGH_QUALITY, CameraMetadata.SHADING_MODE_FAST)
+            ?.let { b.set(CaptureRequest.SHADING_MODE, it) }
+        pick(ci.toneMapModes, CameraMetadata.TONEMAP_MODE_HIGH_QUALITY, CameraMetadata.TONEMAP_MODE_FAST)
+            ?.let { b.set(CaptureRequest.TONEMAP_MODE, it) }
     }
 
     private fun applyZoom(b: CaptureRequest.Builder, ci: CameraInfo) {
@@ -359,8 +389,35 @@ class CameraController(private val manager: CameraManager, private val listener:
         return Rect(l, t, l + w, t + h)
     }
 
+    // Frame-rate watchdog: high-quality processing must not cost smoothness.
+    private var fpsWindowStart = 0L
+    private var fpsWindowFrames = 0
+    private var fpsSlowWindows = 0
+    private var framesSinceStart = 0
+
+    private fun watchFrameRate(result: TotalCaptureResult) {
+        val s = spec ?: return
+        if (!s.video || !hqProcessing) return
+        val ts = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
+        framesSinceStart++
+        if (framesSinceStart < 30) return
+        if (fpsWindowStart == 0L) { fpsWindowStart = ts; fpsWindowFrames = 0; return }
+        fpsWindowFrames++
+        if (fpsWindowFrames < 45) return
+        val fps = fpsWindowFrames * 1e9 / (ts - fpsWindowStart).coerceAtLeast(1L)
+        fpsWindowStart = ts
+        fpsWindowFrames = 0
+        if (fps < s.fps * 0.87) fpsSlowWindows++ else fpsSlowWindows = 0
+        if (fpsSlowWindows >= 2) {
+            Log.w(TAG, "High-quality processing drops frames (%.1f fps); switching to fast".format(fps))
+            hqProcessing = false
+            applyRepeating()
+        }
+    }
+
     private val repeatingCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            watchFrameRate(result)
             val exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
             val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
             val skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW) ?: 0L

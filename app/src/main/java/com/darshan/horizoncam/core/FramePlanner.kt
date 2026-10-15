@@ -13,7 +13,14 @@ data class RenderConfig(
     val smooth: Boolean = false,
     val previewStyle: PreviewStyle = PreviewStyle.GIMBAL,
     val grid: Boolean = false,
-    val mirrorFront: Boolean = false
+    val mirrorFront: Boolean = false,
+    /** Unsharp-mask strength applied while resampling (0 = off). */
+    val sharpness: Double = 0.3,
+    /**
+     * Crop exactly for the current angle instead of the worst case of the lock range.
+     * Used for photos: a still only needs to be straightened for the moment it is taken.
+     */
+    val dynamicCrop: Boolean = false
 )
 
 /** Everything needed to plan one frame. Plain data so the logic can be unit tested on the JVM. */
@@ -105,7 +112,11 @@ object FramePlanner {
         }
         val gamma = HorizonMath.lockAngle(cfg.lockMode, rollImg, baseImg, cfg.levelRange)
         val cropRange = HorizonMath.cropRange(cfg.lockMode, cfg.levelRange)
-        val scale = HorizonMath.fitScale(wn, hn, wo, ho, baseImg.toDouble(), cropRange) * 0.995
+        val scale = if (cfg.dynamicCrop && !i.recording) {
+            HorizonMath.fitScale(wn, hn, wo, ho, gamma, 0.0) * 0.995
+        } else {
+            HorizonMath.fitScale(wn, hn, wo, ho, baseImg.toDouble(), cropRange) * 0.995
+        }
         val outToNat = FrameGeometry.outputToNatural(gamma, scale, flip)
         val natToTex = FrameGeometry.naturalToTex(wn, hn)
         val outToFrame = FrameGeometry.outputToFrame(wo, ho)
@@ -168,6 +179,34 @@ object FramePlanner {
     }
 
     /**
+     * Texture-space step of one viewport pixel along x and y, written to [out] as
+     * (dxS, dxT, dyS, dyT). [ndcToNat] maps viewport NDC to natural texture coordinates
+     * and [st] is the SurfaceTexture matrix (column-major) applied after it.
+     */
+    fun pixelSteps(ndcToNat: Affine, st: FloatArray, vpW: Int, vpH: Int, out: FloatArray) {
+        val mxX = ndcToNat.a * 2.0 / vpW
+        val myX = ndcToNat.c * 2.0 / vpW
+        val mxY = ndcToNat.b * 2.0 / vpH
+        val myY = ndcToNat.d * 2.0 / vpH
+        out[0] = (st[0] * mxX + st[4] * myX).toFloat()
+        out[1] = (st[1] * mxX + st[5] * myX).toFloat()
+        out[2] = (st[0] * mxY + st[4] * myY).toFloat()
+        out[3] = (st[1] * mxY + st[5] * myY).toFloat()
+    }
+
+    /** Supersampling taps (1, 2 or 3 per axis) for a given texels-per-pixel footprint. */
+    fun tapsFor(steps: FloatArray, texW: Int, texH: Int): Int {
+        val rx = hypot(steps[0] * texW.toDouble(), steps[1] * texH.toDouble())
+        val ry = hypot(steps[2] * texW.toDouble(), steps[3] * texH.toDouble())
+        val r = maxOf(rx, ry)
+        return when {
+            r < 1.15 -> 1
+            r < 2.2 -> 2
+            else -> 3
+        }
+    }
+
+    /**
      * Photo straightening: maps output pixels (y down, origin top-left) to pixels of the
      * natural-orientation, true-view JPEG (y down). Returns the transform and output size.
      */
@@ -186,10 +225,11 @@ object FramePlanner {
             FrameOrientation.PORTRAIT -> false
         }
         val gamma = HorizonMath.lockAngle(cfg.lockMode, rollImg, baseImg, cfg.levelRange)
-        val range = HorizonMath.cropRange(cfg.lockMode, cfg.levelRange)
         val unitW = if (landscape) cfg.aspect else 1.0
         val unitH = if (landscape) 1.0 else cfg.aspect
-        val s = HorizonMath.fitScale(wn.toDouble(), hn.toDouble(), unitW, unitH, baseImg.toDouble(), range) * 0.995
+        // A photo only has to be straightened for its own angle, so crop exactly for it
+        // (much larger than the worst-case crop a video needs to stay stable).
+        val s = HorizonMath.fitScale(wn.toDouble(), hn.toDouble(), unitW, unitH, gamma, 0.0) * 0.995
         val wo = maxOf(16, (s * unitW).toInt())
         val ho = maxOf(16, (s * unitH).toInt())
         val flip = isFront && cfg.mirrorFront

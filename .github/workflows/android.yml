@@ -58,10 +58,18 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+      - name: Release notes
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rel.outputs.exists == 'false'
+        run: |
+          awk -v v="## ${{ steps.ver.outputs.name }}" '$0==v{f=1;next} /^## /{f=0} f' CHANGELOG.md > notes.md
+          [ -s notes.md ] || echo "HorizonCam ${{ steps.ver.outputs.name }}" > notes.md
+          printf '\n**Install:** download `HorizonCam-%s-debug.apk` below on your phone and open it.\n' "${{ steps.ver.outputs.name }}" >> notes.md
+
       - name: Publish GitHub release
         if: github.event_name == 'push' && github.ref == 'refs/heads/main' && steps.rel.outputs.exists == 'false'
         uses: softprops/action-gh-release@v2
         with:
+          body_path: notes.md
           tag_name: v${{ steps.ver.outputs.name }}
           name: HorizonCam ${{ steps.ver.outputs.name }}
           target_commitish: ${{ github.sha }}

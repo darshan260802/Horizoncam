@@ -5,6 +5,17 @@
     <string name="grant">Grant access</string>
     <string name="open_settings">Open settings</string>
     <string name="welcome_title">Horizon Lock</string>
-    <string name="welcome_body">Your video stays perfectly level, even if you rotate the phone a full 360°.\n\n• The yellow frame is exactly what gets recorded. It stays level with the real horizon while you move.\n• You can record landscape video while holding the phone upright. Pick the frame with the orientation button at the top.\n• 360° Lock crops the most. Auto Level crops less and fixes tilts up to ±30°.\n• Tap to focus. Long-press to lock focus and exposure. Pinch to zoom.</string>
+    <string name="welcome_body">Your video stays level, even if you rotate the phone a full 360°.
+
+• The yellow frame is exactly what gets recorded. It stays level with the real horizon.
+• Record landscape while holding the phone upright: tap the frame button in the bottom bar.
+• 360° Lock crops the most; Auto Level crops less and fixes tilts up to ±30°.
+
+One-handed gestures
+• Tap to focus, long-press to lock focus and exposure.
+• Swipe up or down on the preview to change brightness.
+• Drag sideways on the lens buttons (or pinch) to zoom.
+• Swipe left or right to switch Photo / Video / Time-lapse.
+• Volume keys take a photo or start recording.</string>
     <string name="got_it">Got it</string>
 </resources>

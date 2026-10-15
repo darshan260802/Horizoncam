@@ -121,6 +121,9 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
     @Volatile var naturalTrueView = true; private set
     @Volatile var error: String? = null; private set
     @Volatile var frameListener: (() -> Unit)? = null
+    /** Called (GL thread) when the first frame of a new camera session reaches the preview. */
+    @Volatile var sessionFrameListener: (() -> Unit)? = null
+    @Volatile private var notifySessionFrame = false
 
     init {
         runSync {
@@ -152,6 +155,7 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
             st.setDefaultBufferSize(w, h)
             bufW = w; bufH = h
             camClockChecked = false
+            notifySessionFrame = true
             val s = Surface(st)
             inputSurface = s
             result = s
@@ -305,7 +309,7 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
         val weight = ((xy - 0.15) / 0.25).coerceIn(0.0, 1.0)
         val dt = if (lastFrameRt > 0) (tRt - lastFrameRt) / 1e9 else 0.033
         lastFrameRt = tRt
-        val alpha = if (cfg.smooth) 1.0 - exp(-dt.coerceIn(0.0, 0.2) / 0.22) else 1.0
+        val alpha = if (cfg.smooth) 1.0 - exp(-dt.coerceIn(0.0, 0.2) / 0.15) else 1.0
         if (!hasFilt) {
             if (xy > 0.05) { filtX = ux / xy; filtY = uy / xy } else { filtX = 0.0; filtY = 1.0 }
             hasFilt = true
@@ -340,6 +344,7 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
         if (previewEgl != EGL14.EGL_NO_SURFACE && pm != null && pf != null) {
             pm.toGl(params.map)
             pf.toGl(params.frame)
+            setSampling(pm, previewW, previewH, cfg.sharpness * 0.6)
             params.outside = plan.previewOutside
             params.border = plan.previewBorder
             params.lineX = plan.lineX
@@ -362,6 +367,10 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
                 GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
                 prog.draw(texId, stMatrix, params)
                 core.swapBuffers(previewEgl)
+                if (notifySessionFrame) {
+                    notifySessionFrame = false
+                    sessionFrameListener?.invoke()
+                }
             } catch (e: Exception) {
                 Log.w(TAG, "preview draw failed, dropping preview surface", e)
                 core.makeCurrent(pbuffer)
@@ -383,6 +392,7 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
                     lastPts = pts
                     em.toGl(params.map)
                     ef.toGl(params.frame)
+                    setSampling(em, encW, encH, cfg.sharpness)
                     params.outside = 1f
                     params.border = 0f
                     params.grid = 0f
@@ -421,6 +431,17 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
     }
 
     // ---------------------------------------------------------------- helpers
+
+    private val steps = FloatArray(4)
+
+    /** Anti-aliasing taps and sharpening for a draw with the given NDC -> natural mapping. */
+    private fun setSampling(ndcToNatTex: Affine, vpW: Int, vpH: Int, sharpen: Double) {
+        FramePlanner.pixelSteps(ndcToNatTex, stMatrix, vpW, vpH, steps)
+        params.dx[0] = steps[0]; params.dx[1] = steps[1]
+        params.dy[0] = steps[2]; params.dy[1] = steps[3]
+        params.taps = FramePlanner.tapsFor(steps, bufW, bufH).toFloat()
+        params.sharpen = sharpen.toFloat()
+    }
 
     private fun runSync(block: () -> Unit) {
         if (Looper.myLooper() == handler.looper) {

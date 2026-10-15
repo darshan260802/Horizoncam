@@ -200,4 +200,35 @@ class FramePlannerTest {
             assertTrue("corner $ix,$iy", ix in 0.0..3000.0 && iy in 0.0..4000.0)
         }
     }
+
+    @Test
+    fun photoCropIsExactForItsAngle() {
+        // A slightly tilted photo keeps far more pixels than the 360° worst case would allow.
+        val cfg = RenderConfig(lockMode = LockMode.LOCK_360, orientation = FrameOrientation.PORTRAIT, aspect = 4.0 / 3.0)
+        val up = rot(4.0, 0.0, 1.0)
+        val plan = FramePlanner.planPhoto(3060, 4080, cfg, FrameGeometry.rollDeg(up[0], up[1]), 0, false)
+        val worstCase = HorizonMath.fitScale(3060.0, 4080.0, 1.0, 4.0 / 3.0, 0.0, 180.0)
+        assertTrue("exact ${plan.width} vs worst ${worstCase}", plan.width > worstCase * 1.5)
+        // ...and still stays inside the image.
+        val m = plan.outToImage
+        for ((x, y) in listOf(0.0 to 0.0, plan.width.toDouble() to 0.0, 0.0 to plan.height.toDouble(), plan.width.toDouble() to plan.height.toDouble())) {
+            assertTrue(m.mapX(x, y) in 0.0..3060.0 && m.mapY(x, y) in 0.0..4080.0)
+        }
+    }
+
+    @Test
+    fun antiAliasingTapsFollowDownscale() {
+        val cfg = RenderConfig(lockMode = LockMode.LOCK_360, orientation = FrameOrientation.LANDSCAPE)
+        val i = input(backSt, false, 10.0, cfg, encW = 1920, encH = 1080)
+        val p = FramePlanner.plan(i)!!
+        val steps = FloatArray(4)
+        FramePlanner.pixelSteps(p.encoderMap!!, backSt, 1920, 1080, steps)
+        // 2208 px of sensor short side, 1080p output inside the 360° circle: about 1:1, single tap.
+        assertEquals(1, FramePlanner.tapsFor(steps, 2944, 2208))
+        // The same frame from a 4000x3000 stream is downscaled by ~1.4: supersample.
+        val big = FrameInput(backSt, 4000, 3000, false, cfg, i.rollDev, i.betaDev, true, i.lockedBetaDev, 1920, 1080, false, 0, 0, 0.0, 0.0, 0.0, 0.0, 0)
+        val pb = FramePlanner.plan(big)!!
+        FramePlanner.pixelSteps(pb.encoderMap!!, backSt, 1920, 1080, steps)
+        assertEquals(2, FramePlanner.tapsFor(steps, 4000, 3000))
+    }
 }

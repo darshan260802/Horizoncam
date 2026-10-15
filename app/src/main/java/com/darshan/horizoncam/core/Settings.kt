@@ -97,8 +97,13 @@ class Settings(context: Context) {
         set(v) = putInt("response", v)
 
     var preferUltraWide: Boolean
-        get() = p.getBoolean("preferUltraWide", true)
+        get() = p.getBoolean("preferUltraWide", false)
         set(v) = putBool("preferUltraWide", v)
+
+    /** 0 = off, 1 = natural, 2 = crisp. */
+    var sharpness: Int
+        get() = p.getInt("sharpness", 1)
+        set(v) = putInt("sharpness", v)
 
     var previewStyle: PreviewStyle
         get() = enumPref("previewStyle", PreviewStyle.GIMBAL)

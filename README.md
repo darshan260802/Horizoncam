@@ -19,6 +19,17 @@ Horizon-locked video for every Android phone. HorizonCam brings the Galaxy S26 "
 - **Leveled photos**: the JPEG is straightened using the phone's orientation at the exact moment of exposure, then cropped to 4:3, 16:9 or 1:1.
 - Camera input resolution is chosen automatically so the crop keeps full output detail where the hardware allows.
 
+**One-handed UI**
+- Every control is in the bottom third: a quick bar with More, Lock, Frame, Light, Timer and Adjust, plus lens buttons, modes and the shutter.
+- Pop-up option rows show every choice at once; the settings bottom sheet uses tap-to-choose options.
+- Drag sideways on the lens buttons to zoom. Swipe up or down on the preview to change brightness. Swipe sideways to change mode.
+- Smooth transitions when switching camera or mode, plus haptic feedback.
+
+**Image quality**
+- Highest native-resolution camera stream (up to 12 MP), downsampled with multi-sample anti-aliasing and optional sharpening.
+- Camera high-quality processing (noise reduction, edges, colour) with an automatic frame-rate safeguard.
+- Photos are straightened and cropped for their exact angle.
+
 **Camera controls**
 - Lens buttons (ultra-wide / 1× / 2× / tele where available), pinch to zoom.
 - Tap to focus and meter. Long-press for AE/AF lock.

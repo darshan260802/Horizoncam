@@ -80,4 +80,47 @@ class StartupTest {
         c.pause().stop().destroy()
         println("STARTUP-NO-PERMISSIONS OK")
     }
+
+    private fun idle() = repeat(6) { Thread.sleep(40); shadowOf(Looper.getMainLooper()).idle() }
+
+    @Test
+    fun oneHandedControlsWork() {
+        val app = RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        addCameras()
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val a = c.get()
+        idle()
+        fun click(id: Int) { a.findViewById<android.view.View>(id).performClick(); idle() }
+        fun pickOption(index: Int) {
+            val row = a.findViewById<android.widget.LinearLayout>(R.id.optionRow)
+            if (row.childCount > index) row.getChildAt(index).performClick()
+            idle()
+        }
+        click(R.id.qLock); pickOption(1)
+        click(R.id.qLock); pickOption(0)
+        click(R.id.qFrame); pickOption(1)
+        click(R.id.qTimer); pickOption(1)
+        click(R.id.qAdjust); click(R.id.qAdjust)
+        click(R.id.qTorch)
+        click(R.id.modePhoto); click(R.id.modeTimelapse); click(R.id.modeVideo)
+        // Settings sheet: tap a pill in every row, then close with back.
+        click(R.id.qSettings)
+        val host = a.findViewById<android.widget.FrameLayout>(R.id.settingsHost)
+        fun tapAllPills(v: android.view.View) {
+            if (v is android.widget.TextView && v.isClickable && v.parent is android.widget.LinearLayout &&
+                (v.parent as android.view.View).parent is android.widget.HorizontalScrollView) {
+                v.performClick()
+            } else if (v is android.view.ViewGroup) {
+                for (i in 0 until v.childCount) tapAllPills(v.getChildAt(i))
+            }
+        }
+        tapAllPills(host)
+        idle()
+        @Suppress("DEPRECATION") a.onBackPressed()
+        idle()
+        click(R.id.btnSwitch); click(R.id.btnSwitch)
+        c.pause().stop().destroy()
+        println("ONE-HANDED-CONTROLS OK")
+    }
 }

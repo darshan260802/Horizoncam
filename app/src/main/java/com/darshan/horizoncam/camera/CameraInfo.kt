@@ -39,6 +39,12 @@ class CameraInfo(val id: String, val chars: CameraCharacteristics) {
     val sensorSizeMm = chars.get(CameraCharacteristics.SENSOR_INFO_PHYSICAL_SIZE)
     val maxDigitalZoom: Float = chars.get(CameraCharacteristics.SCALER_AVAILABLE_MAX_DIGITAL_ZOOM) ?: 1f
     val capabilities: IntArray = chars.get(CameraCharacteristics.REQUEST_AVAILABLE_CAPABILITIES) ?: IntArray(0)
+    val noiseModes: IntArray = chars.get(CameraCharacteristics.NOISE_REDUCTION_AVAILABLE_NOISE_REDUCTION_MODES) ?: IntArray(0)
+    val edgeModes: IntArray = chars.get(CameraCharacteristics.EDGE_AVAILABLE_EDGE_MODES) ?: IntArray(0)
+    val aberrationModes: IntArray = chars.get(CameraCharacteristics.COLOR_CORRECTION_AVAILABLE_ABERRATION_MODES) ?: IntArray(0)
+    val hotPixelModes: IntArray = chars.get(CameraCharacteristics.HOT_PIXEL_AVAILABLE_HOT_PIXEL_MODES) ?: IntArray(0)
+    val shadingModes: IntArray = chars.get(CameraCharacteristics.SHADING_AVAILABLE_MODES) ?: IntArray(0)
+    val toneMapModes: IntArray = chars.get(CameraCharacteristics.TONEMAP_AVAILABLE_TONE_MAP_MODES) ?: IntArray(0)
 
     val zoomRange: Range<Float>? =
         if (Build.VERSION.SDK_INT >= 30) chars.get(CameraCharacteristics.CONTROL_ZOOM_RATIO_RANGE) else null
@@ -94,8 +100,10 @@ class CameraInfo(val id: String, val chars: CameraCharacteristics) {
         if (sensorOrientation % 180 == 90) intArrayOf(s.height, s.width) else intArrayOf(s.width, s.height)
 
     /**
-     * Ranks camera stream sizes for video so that the horizon-lock crop still has at least
-     * as many pixels as the output frame. Returns the best size first, then fallbacks.
+     * Ranks camera stream sizes for video. Quality first: the largest stream in the sensor's
+     * native aspect ratio that runs at the requested frame rate, so the horizon-lock crop keeps
+     * as much real detail as possible (the GPU then downsamples it with anti-aliasing).
+     * Returns the best size first, then progressively safer fallbacks.
      */
     fun chooseVideoInputSizes(
         fps: Int,
@@ -106,11 +114,11 @@ class CameraInfo(val id: String, val chars: CameraCharacteristics) {
         orientation: FrameOrientation
     ): List<Size> {
         val frameDuration = 1_000_000_000L / fps
-        val maxArea = if (fps > 30) 3840 * 2160 else 4096 * 3072
+        val maxArea = if (fps > 30) 3840L * 2160 else 4096L * 3072
         val all = textureSizes()
+        fun fpsOk(s: Size) = minFrameDurationNs(s).let { it == 0L || it <= frameDuration * 105 / 100 }
         var cands = all.filter { s ->
-            s.width >= 640 && s.height >= 480 && s.width.toLong() * s.height <= maxArea &&
-                minFrameDurationNs(s).let { it == 0L || it <= frameDuration * 105 / 100 }
+            s.width >= 640 && s.height >= 480 && s.width.toLong() * s.height <= maxArea && fpsOk(s)
         }
         if (cands.isEmpty()) cands = all.filter { it.width.toLong() * it.height <= 1920 * 1440 }
         if (cands.isEmpty()) cands = all
@@ -120,37 +128,48 @@ class CameraInfo(val id: String, val chars: CameraCharacteristics) {
             FrameOrientation.LANDSCAPE -> listOf(true)
             FrameOrientation.PORTRAIT -> listOf(false)
         }
-        val bases = if (lockMode == LockMode.LOCK_360) listOf(0) else listOf(0, 90)
 
-        fun score(s: Size): Double {
+        /** Image pixels per output pixel in the worst case (>= 1 means full detail). */
+        fun detail(s: Size): Double {
             val nd = naturalDims(s)
             var worst = Double.MAX_VALUE
             for (landscape in frames) {
-                // In AUTO mode a landscape frame pairs with a sideways phone and vice versa.
-                val baseList = if (orientation == FrameOrientation.AUTO && lockMode != LockMode.LOCK_360) {
-                    listOf(if (landscape) 90 else 0)
-                } else bases
+                val bases = when {
+                    lockMode == LockMode.LOCK_360 -> listOf(0)
+                    orientation == FrameOrientation.AUTO -> listOf(if (landscape) 90 else 0)
+                    else -> listOf(0, 90)
+                }
                 val fs = HorizonMath.frameSize(outShort, aspect, landscape)
-                for (b in baseList) {
+                for (b in bases) {
                     worst = min(worst, HorizonMath.fitScale(nd[0].toDouble(), nd[1].toDouble(), fs[0].toDouble(), fs[1].toDouble(), b.toDouble(), range))
                 }
             }
             return worst
         }
 
-        val scored = cands.map { it to score(it) }
-        val good = scored.filter { it.second >= 1.0 }.sortedBy { it.first.width.toLong() * it.first.height }
-        val best = good.firstOrNull()?.first
-            ?: scored.sortedWith(compareByDescending<Pair<Size, Double>> { (it.second * 100).roundToInt() }
-                .thenBy { it.first.width.toLong() * it.first.height }).firstOrNull()?.first
+        val arrAspect = activeArray.width().toDouble() / activeArray.height()
+        fun native(s: Size) = abs(s.width.toDouble() / s.height - arrAspect) < 0.03
+        fun area(s: Size) = s.width.toLong() * s.height
+        val ranked = cands.sortedWith(
+            compareByDescending<Size> { native(it) }
+                .thenByDescending { area(it) }
+        )
         val result = mutableListOf<Size>()
-        if (best != null) result.add(best)
-        // Fallbacks in case the HAL rejects the preferred configuration.
+        ranked.firstOrNull()?.let { result.add(it) }
+        // A smaller native-aspect stream that still gives full detail, in case the HAL rejects the largest one.
+        ranked.filter { native(it) && area(it) <= 8_500_000L && detail(it) >= 1.0 }.lastOrNull()?.let { if (!result.contains(it)) result.add(it) }
         for (fb in listOf(Size(1920, 1440), Size(1920, 1080), Size(1440, 1080), Size(1280, 960), Size(1280, 720))) {
             if (cands.any { it == fb } && !result.contains(fb)) result.add(fb)
         }
         if (result.isEmpty() && all.isNotEmpty()) result.add(all.first())
         return result
+    }
+
+    /** Pixels of camera detail per output pixel for a stream (diagnostics / UI). */
+    fun detailFor(s: Size, outShort: Int, aspect: Double, lockMode: LockMode, levelRange: Double): Double {
+        val nd = naturalDims(s)
+        val fs = HorizonMath.frameSize(outShort, aspect, true)
+        return HorizonMath.fitScale(nd[0].toDouble(), nd[1].toDouble(), fs[0].toDouble(), fs[1].toDouble(), 0.0, HorizonMath.cropRange(lockMode, levelRange))
     }
 
     /** Preview stream + JPEG size for photo mode. */
