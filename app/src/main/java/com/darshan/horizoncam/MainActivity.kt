@@ -204,7 +204,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
         if (renderer.error != null) toast(renderer.error!!)
         if (!sensor.available) toast("No motion sensor found: horizon lock is unavailable")
-        CrashLogger.lastCrash(this)?.let { showCrashDialog(it) }
+        CrashLogger.unseenCrash(this)?.let { showCrashDialog(it) }
     }
 
     override fun onResume() {

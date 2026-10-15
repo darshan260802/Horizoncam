@@ -36,6 +36,16 @@ object CrashLogger {
         return if (f.exists()) f.readText() else null
     }
 
+    /** Returns the crash text only the first time it is asked for (used for the launch dialog). */
+    fun unseenCrash(context: Context): String? {
+        val f = File(context.filesDir, FILE)
+        if (!f.exists()) return null
+        val prefs = context.getSharedPreferences("crash", Context.MODE_PRIVATE)
+        if (prefs.getLong("seen", 0L) == f.lastModified()) return null
+        prefs.edit().putLong("seen", f.lastModified()).apply()
+        return f.readText()
+    }
+
     fun clear(context: Context) {
         File(context.filesDir, FILE).delete()
     }
