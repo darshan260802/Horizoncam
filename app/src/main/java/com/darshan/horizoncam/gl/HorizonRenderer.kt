@@ -50,6 +50,10 @@ interface EncoderSink {
     /** First frame was encoded; [monoNs] is its capture time in System.nanoTime() base. */
     fun onFirstFrame(monoNs: Long)
     fun onFrameEncoded(ptsNs: Long)
+    /** While paused, frames are not encoded. */
+    fun isPaused(): Boolean
+    /** Total paused time (ns) so far; removed from timestamps so the video has no gap. */
+    fun pausedNs(): Long
 }
 
 /**
@@ -124,6 +128,7 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
     /** Called (GL thread) when the first frame of a new camera session reaches the preview. */
     @Volatile var sessionFrameListener: (() -> Unit)? = null
     @Volatile private var notifySessionFrame = false
+    @Volatile private var snapshotCallback: ((android.graphics.Bitmap?) -> Unit)? = null
 
     init {
         runSync {
@@ -225,6 +230,14 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
                 encEgl = EGL14.EGL_NO_SURFACE
             }
         }
+    }
+
+    /**
+     * Captures the next output frame (horizon-locked, full output resolution) as a Bitmap.
+     * The callback runs on the GL thread.
+     */
+    fun requestSnapshot(cb: (android.graphics.Bitmap?) -> Unit) {
+        snapshotCallback = cb
     }
 
     /** Orientation captured at the start of the current/last recording. */
@@ -382,12 +395,14 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
         // ---- encoder ----
         val em = plan.encoderMap
         val ef = plan.encoderFrame
-        if (recording && encEgl != EGL14.EGL_NO_SURFACE && em != null && ef != null) {
+        val paused = encSink?.isPaused() == true
+        if (recording && !paused && encEgl != EGL14.EGL_NO_SURFACE && em != null && ef != null) {
             val encode = (encFrameCounter % encTimelapse) == 0L
             encFrameCounter++
             if (encode) {
                 if (encT0Mono < 0) { encT0Mono = tMono; encSink?.onFirstFrame(tMono) }
-                val pts = if (encTimelapse > 1) encCount * 1_000_000_000L / encFps else tMono - encT0Mono
+                val pts = if (encTimelapse > 1) encCount * 1_000_000_000L / encFps
+                else tMono - encT0Mono - (encSink?.pausedNs() ?: 0L)
                 if (pts > lastPts) {
                     lastPts = pts
                     em.toGl(params.map)
@@ -416,6 +431,12 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
             }
         }
 
+        // ---- still snapshot of the output frame ----
+        snapshotCallback?.let { cb ->
+            snapshotCallback = null
+            cb(renderSnapshot(plan, cfg))
+        }
+
         // ---- stats ----
         fpsCount++
         if (fpsStart == 0L) fpsStart = nowMono
@@ -428,6 +449,70 @@ class HorizonRenderer(private val sensor: HorizonSensor) : SurfaceTexture.OnFram
         val tilt = HorizonMath.wrapDeg(rollDev - betaDev)
         state = RenderState(rollDev, betaDev, tilt, plan.cropZoom, plan.wo.toInt(), plan.ho.toInt(), xy < 0.3, fps, bufW, bufH)
         frameListener?.invoke()
+    }
+
+    // ---------------------------------------------------------------- snapshot
+
+    private var fbo = 0
+    private var fboTex = 0
+    private var fboW = 0
+    private var fboH = 0
+
+    private fun renderSnapshot(plan: com.darshan.horizoncam.core.FramePlan, cfg: RenderConfig): android.graphics.Bitmap? {
+        val core = egl ?: return null
+        val prog = program ?: return null
+        return try {
+            var w = plan.wo.toInt()
+            var h = plan.ho.toInt()
+            val cap = maxOf(w, h).let { if (it > 3840) 3840.0 / it else 1.0 }
+            w = (w * cap).toInt() / 2 * 2
+            h = (h * cap).toInt() / 2 * 2
+            core.makeCurrent(pbuffer)
+            if (fbo == 0 || fboW != w || fboH != h) {
+                if (fbo != 0) {
+                    GLES20.glDeleteFramebuffers(1, intArrayOf(fbo), 0)
+                    GLES20.glDeleteTextures(1, intArrayOf(fboTex), 0)
+                }
+                val t = IntArray(1)
+                GLES20.glGenTextures(1, t, 0)
+                fboTex = t[0]
+                GLES20.glBindTexture(GLES20.GL_TEXTURE_2D, fboTex)
+                GLES20.glTexImage2D(GLES20.GL_TEXTURE_2D, 0, GLES20.GL_RGBA, w, h, 0, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, null)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MIN_FILTER, GLES20.GL_LINEAR)
+                GLES20.glTexParameteri(GLES20.GL_TEXTURE_2D, GLES20.GL_TEXTURE_MAG_FILTER, GLES20.GL_LINEAR)
+                val f = IntArray(1)
+                GLES20.glGenFramebuffers(1, f, 0)
+                fbo = f[0]
+                GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
+                GLES20.glFramebufferTexture2D(GLES20.GL_FRAMEBUFFER, GLES20.GL_COLOR_ATTACHMENT0, GLES20.GL_TEXTURE_2D, fboTex, 0)
+                fboW = w; fboH = h
+            }
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, fbo)
+            val ndcToOut = Affine.scale(plan.wo / 2.0, plan.ho / 2.0)
+            val map = ndcToOut.then(FrameGeometry.outputToNatural(plan.gammaDeg, plan.scale, plan.flip))
+                .then(FrameGeometry.naturalToTex(plan.wn, plan.hn))
+            map.toGl(params.map)
+            ndcToOut.then(FrameGeometry.outputToFrame(plan.wo, plan.ho)).toGl(params.frame)
+            setSampling(map, w, h, cfg.sharpness)
+            params.outside = 1f; params.border = 0f; params.grid = 0f; params.lineX = 0f; params.lineY = 0f
+            GLES20.glViewport(0, 0, w, h)
+            prog.draw(texId, stMatrix, params)
+            val buf = java.nio.ByteBuffer.allocateDirect(w * h * 4).order(java.nio.ByteOrder.nativeOrder())
+            GLES20.glReadPixels(0, 0, w, h, GLES20.GL_RGBA, GLES20.GL_UNSIGNED_BYTE, buf)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            buf.rewind()
+            val raw = android.graphics.Bitmap.createBitmap(w, h, android.graphics.Bitmap.Config.ARGB_8888)
+            raw.copyPixelsFromBuffer(buf)
+            // GL rows start at the bottom.
+            val m = android.graphics.Matrix().apply { postScale(1f, -1f) }
+            val out = android.graphics.Bitmap.createBitmap(raw, 0, 0, w, h, m, false)
+            if (out !== raw) raw.recycle()
+            out
+        } catch (e: Throwable) {
+            Log.e(TAG, "snapshot failed", e)
+            GLES20.glBindFramebuffer(GLES20.GL_FRAMEBUFFER, 0)
+            null
+        }
     }
 
     // ---------------------------------------------------------------- helpers

@@ -83,8 +83,14 @@ class StartupTest {
 
     private fun idle() = repeat(6) { Thread.sleep(40); shadowOf(Looper.getMainLooper()).idle() }
 
+    private fun findByDesc(v: android.view.View, desc: String): android.view.View? {
+        if (v.contentDescription?.toString() == desc) return v
+        if (v is android.view.ViewGroup) for (i in 0 until v.childCount) findByDesc(v.getChildAt(i), desc)?.let { return it }
+        return null
+    }
+
     @Test
-    fun oneHandedControlsWork() {
+    fun cameraControlsWork() {
         val app = RuntimeEnvironment.getApplication()
         shadowOf(app).grantPermissions(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
         addCameras()
@@ -92,35 +98,85 @@ class StartupTest {
         val a = c.get()
         idle()
         fun click(id: Int) { a.findViewById<android.view.View>(id).performClick(); idle() }
-        fun pickOption(index: Int) {
-            val row = a.findViewById<android.widget.LinearLayout>(R.id.optionRow)
-            if (row.childCount > index) row.getChildAt(index).performClick()
+        fun clickChild(id: Int, index: Int) {
+            val g = a.findViewById<android.view.ViewGroup>(id)
+            val items = (0 until g.childCount).map { g.getChildAt(it) }.filter { it.isClickable }
+            if (items.size > index) items[index].performClick()
             idle()
         }
-        click(R.id.qLock); pickOption(1)
-        click(R.id.qLock); pickOption(0)
-        click(R.id.qFrame); pickOption(1)
-        click(R.id.qTimer); pickOption(1)
-        click(R.id.qAdjust); click(R.id.qAdjust)
-        click(R.id.qTorch)
-        click(R.id.modePhoto); click(R.id.modeTimelapse); click(R.id.modeVideo)
-        // Settings sheet: tap a pill in every row, then close with back.
-        click(R.id.qSettings)
-        val host = a.findViewById<android.widget.FrameLayout>(R.id.settingsHost)
-        fun tapAllPills(v: android.view.View) {
-            if (v is android.widget.TextView && v.isClickable && v.parent is android.widget.LinearLayout &&
-                (v.parent as android.view.View).parent is android.widget.HorizontalScrollView) {
-                v.performClick()
-            } else if (v is android.view.ViewGroup) {
-                for (i in 0 until v.childCount) tapAllPills(v.getChildAt(i))
-            }
+        fun tapQuick(label: String) {
+            val v = findByDesc(a.findViewById(R.id.quickPanel), label)
+            check(v != null) { "quick control $label missing" }
+            v.performClick()
+            idle()
         }
-        tapAllPills(host)
-        idle()
-        @Suppress("DEPRECATION") a.onBackPressed()
-        idle()
+        fun tapAllChips(id: Int) {
+            // Every chip / pill (TextView leaves that are clickable).
+            fun walk(v: android.view.View) {
+                if (v is android.widget.TextView && v.isClickable) v.performClick()
+                else if (v is android.view.ViewGroup) for (i in 0 until v.childCount) walk(v.getChildAt(i))
+            }
+            walk(a.findViewById(id))
+            idle()
+        }
+
+        // Stabilization / horizon lock menu at the top.
+        for (i in 0 until 3) { click(R.id.btnSteady); clickChild(R.id.steadyMenu, i) }
+        // Resolution menu, frame orientation.
+        click(R.id.chipRes); tapAllChips(R.id.resMenu)
+        repeat(3) { click(R.id.btnFrame) }
+
+        for (mode in listOf(R.id.modeVideo, R.id.modeTimelapse, R.id.modePhoto)) {
+            click(mode)
+            click(R.id.chipRes); tapAllChips(R.id.resMenu)
+            click(R.id.btnQuick)
+            for (label in listOf("Torch", "Timer", "Ratio", "Brightness", "Grid", "Level", "Video size", "Speed", "Processing")) {
+                val v = findByDesc(a.findViewById(R.id.quickPanel), label) ?: continue
+                v.performClick(); idle()
+                tapAllChips(R.id.quickPanel)
+            }
+            tapQuick("Grid"); tapQuick("Level"); tapQuick("Torch")
+            @Suppress("DEPRECATION") a.onBackPressed()
+            idle()
+        }
+        click(R.id.modeVideo)
+
+        // Settings opens its own screen.
+        click(R.id.btnQuick)
+        tapQuick("Settings")
+        val next = shadowOf(a).nextStartedActivity
+        check(next?.component?.className == SettingsActivity::class.java.name) { "settings not opened: $next" }
+
         click(R.id.btnSwitch); click(R.id.btnSwitch)
         c.pause().stop().destroy()
-        println("ONE-HANDED-CONTROLS OK")
+        println("CAMERA-CONTROLS OK")
+    }
+
+    @Test
+    fun settingsScreenWorks() {
+        addCameras()
+        val c = Robolectric.buildActivity(SettingsActivity::class.java).setup()
+        val a = c.get()
+        idle()
+        // Tap every row; close any dialog that opens (after picking its first choice).
+        fun rows(v: android.view.View, out: MutableList<android.view.View>) {
+            if (v is android.widget.LinearLayout && v.isClickable) { out.add(v); return }
+            if (v is android.view.ViewGroup) for (i in 0 until v.childCount) rows(v.getChildAt(i), out)
+        }
+        val all = ArrayList<android.view.View>()
+        rows(a.window.decorView, all)
+        check(all.size > 20) { "only ${all.size} setting rows" }
+        for (r in all) {
+            r.performClick()
+            idle()
+            val d = org.robolectric.shadows.ShadowAlertDialog.getLatestAlertDialog()
+            if (d != null && d.isShowing) {
+                d.listView?.let { lv -> if (lv.adapter != null && lv.adapter.count > 0) lv.performItemClick(lv.getChildAt(0), 0, 0) }
+                if (d.isShowing) d.dismiss()
+                idle()
+            }
+        }
+        c.pause().stop().destroy()
+        println("SETTINGS-SCREEN OK (${all.size} rows)")
     }
 }

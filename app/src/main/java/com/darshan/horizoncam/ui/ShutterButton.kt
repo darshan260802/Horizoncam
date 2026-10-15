@@ -64,8 +64,10 @@ class ShutterButton @JvmOverloads constructor(context: Context, attrs: Attribute
         val cx = width / 2f
         val cy = height / 2f
         val r = min(width, height) / 2f
-        val stroke = r * 0.09f
+        val d = resources.displayMetrics.density
+        val stroke = 3.5f * d
         ring.strokeWidth = stroke
+        ring.color = Color.WHITE
         canvas.drawCircle(cx, cy, r - stroke / 2f, ring)
 
         if (progress >= 0f) {
@@ -74,21 +76,21 @@ class ShutterButton @JvmOverloads constructor(context: Context, attrs: Attribute
             canvas.drawArc(rect, -90f, 360f * progress, false, prog)
         }
 
-        fill.color = when (mode) {
-            CaptureMode.PHOTO -> Color.WHITE
-            CaptureMode.VIDEO -> 0xFFFF4436.toInt()
-            CaptureMode.TIMELAPSE -> 0xFFFFC83D.toInt()
-        }
-        if (mode == CaptureMode.PHOTO && !recording) {
-            canvas.drawCircle(cx, cy, (r - stroke * 2.4f) * pressScale, fill)
+        val photo = mode == CaptureMode.PHOTO && !recording
+        fill.color = if (photo) Color.WHITE else RED
+        val inner = (r - (if (photo) 6.5f else 8f) * d) * pressScale
+        if (photo) {
+            canvas.drawCircle(cx, cy, inner, fill)
             return
         }
-        // Circle -> rounded square while recording.
-        val inner = (r - stroke * 2.4f) * pressScale
-        val half = inner * (1f - 0.45f * morph)
-        val corner = half * (1f - 0.7f * morph)
+        // Red dot morphs into a rounded square while recording.
+        val half = inner * (1f - 0.52f * morph)
+        val corner = half * (1f - 0.75f * morph)
         rect.set(cx - half, cy - half, cx + half, cy + half)
-        if (recording) fill.color = 0xFFFF4436.toInt()
         canvas.drawRoundRect(rect, corner, corner, fill)
+    }
+
+    companion object {
+        private const val RED = 0xFFF5372B.toInt()
     }
 }

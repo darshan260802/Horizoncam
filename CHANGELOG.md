@@ -1,5 +1,17 @@
 # Changelog
 
+## 0.3.0
+Redesigned to look and work like the latest Galaxy camera, with horizon lock built in.
+
+- New camera screen: stabilization button (Off / Steady / Steady + horizon lock) and a video size chip at the top; frame, zoom buttons and quick controls above the mode carousel; gallery, shutter and camera switch at the bottom.
+- Quick controls panel: settings, torch, timer, ratio, video size or picture processing, brightness with white balance, grid and level.
+- Video size menu with UHD / QHD / FHD / HD at 30 or 60 fps (60 only when the camera supports it) and 9:16, 3:4 and 1:1 ratios.
+- Pause and resume while recording, and take photos from the video while recording (horizon-locked, full video resolution).
+- Picture processing: uses the phone's own Auto, HDR or Night processing for photos when the phone offers it to apps (Android 12+).
+- New settings screen in the One UI style (large title, grouped cards, switches and choice dialogs).
+- The viewfinder now starts under the top bar and shows exactly what is recorded; swipe up or down to switch cameras; drag after tap-to-focus to change brightness.
+- New shutter design: white ring with a white button for photos and a red button for video that turns into a stop square.
+
 ## 0.2.0
 
 **Image quality**

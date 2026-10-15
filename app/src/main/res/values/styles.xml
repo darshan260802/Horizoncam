@@ -59,9 +59,9 @@
         <item name="android:paddingEnd">14dp</item>
         <item name="android:paddingTop">8dp</item>
         <item name="android:paddingBottom">8dp</item>
-        <item name="android:textSize">13sp</item>
+        <item name="android:textSize">13.5sp</item>
         <item name="android:fontFamily">sans-serif-medium</item>
-        <item name="android:letterSpacing">0.08</item>
-        <item name="android:textColor">@color/text_dim</item>
+        <item name="android:letterSpacing">0.04</item>
+        <item name="android:textColor">#B3FFFFFF</item>
     </style>
 </resources>

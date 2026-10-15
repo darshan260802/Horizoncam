@@ -40,7 +40,9 @@ object PhotoProcessor {
         /** Snapped device orientation at shutter time. */
         val betaDev: Int,
         val isFront: Boolean,
-        val mirrorFront: Boolean
+        val mirrorFront: Boolean,
+        /** Camera sensor orientation; used to fix JPEGs delivered without the requested rotation. */
+        val sensorOrientation: Int = 0
     )
 
     class Result(val uri: Uri?, val thumbnail: Bitmap?, val width: Int, val height: Int, val error: String?)
@@ -62,8 +64,19 @@ object PhotoProcessor {
                 ?: return Result(null, null, 0, 0, "Could not decode photo")
 
             // 1) Bring the image into natural (device-upright, true-view) orientation.
-            val natural = applyExifOrientation(raw, exifOrientation)
+            var natural = applyExifOrientation(raw, exifOrientation)
             if (natural !== raw) raw.recycle()
+            // Some capture paths (notably vendor HDR / Night extensions) ignore JPEG_ORIENTATION and
+            // deliver the sensor-oriented image. Sensors are landscape, so an upright phone must give
+            // a portrait image; rotate the way JPEG_ORIENTATION would have.
+            var fixedRotation = false
+            if (p.sensorOrientation % 180 == 90 && natural.width > natural.height) {
+                val m = Matrix().apply { postRotate(p.sensorOrientation.toFloat()) }
+                val rotated = Bitmap.createBitmap(natural, 0, 0, natural.width, natural.height, m, true)
+                if (rotated !== natural) natural.recycle()
+                natural = rotated
+                fixedRotation = true
+            }
             val wn = natural.width.toDouble()
             val hn = natural.height.toDouble()
 
@@ -79,7 +92,7 @@ object PhotoProcessor {
             val flip = plan.flip
 
             val identity = abs(HorizonMath.wrapDeg(gamma)) < 1e-6 && !flip && wo >= natural.width - 2 && ho >= natural.height - 2
-            if (identity && exifOrientation == ExifInterface.ORIENTATION_NORMAL) {
+            if (identity && exifOrientation == ExifInterface.ORIENTATION_NORMAL && !fixedRotation) {
                 // Nothing to straighten or crop: keep the original JPEG untouched.
                 var savedUri: Uri? = null
                 val lock = Object()

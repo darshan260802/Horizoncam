@@ -165,7 +165,10 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
 
     @Volatile var isRecording = false; private set
     @Volatile var lastPtsNs = 0L; private set
-    private var startElapsed = 0L
+    @Volatile var isPaused = false; private set
+    private val pausedTotalNs = AtomicLong(0)
+    private var pauseStartedNs = 0L
+    private var startMono = 0L
 
     private var target: MediaSaver.Target? = null
     private var muxer: MuxerHolder? = null
@@ -177,7 +180,26 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
     @Volatile private var videoEosSignaled = false
     private val t0Mono = AtomicLong(-1)
 
-    val elapsedMs: Long get() = if (isRecording) SystemClock.elapsedRealtime() - startElapsed else 0L
+    /** Recorded duration so far, excluding pauses. */
+    val elapsedMs: Long
+        get() {
+            if (!isRecording) return 0L
+            val now = System.nanoTime()
+            val pausedNow = if (isPaused) now - pauseStartedNs else 0L
+            return (now - startMono - pausedTotalNs.get() - pausedNow) / 1_000_000L
+        }
+
+    fun pause() {
+        if (!isRecording || isPaused) return
+        pauseStartedNs = System.nanoTime()
+        isPaused = true
+    }
+
+    fun resume() {
+        if (!isPaused) return
+        pausedTotalNs.addAndGet(System.nanoTime() - pauseStartedNs)
+        isPaused = false
+    }
 
     fun start(cfg: Config): String? {
         if (isRecording) return "Already recording"
@@ -200,6 +222,8 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
             t0Mono.set(-1)
             lastPtsNs = 0
             videoEosSignaled = false
+            isPaused = false
+            pausedTotalNs.set(0)
 
             val vt = Thread({ drainVideo(codec, holder) }, "VideoDrain")
             videoThread = vt
@@ -215,9 +239,11 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
             val ok = renderer.startEncoding(surface, cfg.width, cfg.height, cfg.rotate90, cfg.timelapse, cfg.fps, object : EncoderSink {
                 override fun onFirstFrame(monoNs: Long) { t0Mono.set(monoNs) }
                 override fun onFrameEncoded(ptsNs: Long) { lastPtsNs = ptsNs }
+                override fun isPaused(): Boolean = this@VideoRecorder.isPaused
+                override fun pausedNs(): Long = pausedTotalNs.get()
             })
             if (!ok) throw IllegalStateException("Renderer could not attach to the encoder")
-            startElapsed = SystemClock.elapsedRealtime()
+            startMono = System.nanoTime()
             isRecording = true
             return null
         } catch (e: Exception) {
@@ -401,8 +427,8 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
                     anchorNs + chunkStart * 1_000_000_000L / rate
                 }
                 val t0 = t0Mono.get()
-                if (t0 < 0) continue
-                var ptsUs = (ptsNs - t0) / 1000
+                if (t0 < 0 || isPaused) continue
+                var ptsUs = (ptsNs - t0 - pausedTotalNs.get()) / 1000
                 if (ptsUs < 0) continue
                 if (ptsUs <= lastPtsUs) ptsUs = lastPtsUs + 1
                 // Queue the chunk (split if the codec buffer is smaller).
@@ -442,6 +468,7 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
     fun stop() {
         if (!isRecording) return
         isRecording = false
+        isPaused = false
         renderer.stopEncoding()
         val codec = videoCodec
         try {

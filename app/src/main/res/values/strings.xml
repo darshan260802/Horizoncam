@@ -5,17 +5,17 @@
     <string name="grant">Grant access</string>
     <string name="open_settings">Open settings</string>
     <string name="welcome_title">Horizon Lock</string>
-    <string name="welcome_body">Your video stays level, even if you rotate the phone a full 360°.
+    <string name="welcome_body">Your video stays level, even if you turn the phone all the way round.
 
-• The yellow frame is exactly what gets recorded. It stays level with the real horizon.
-• Record landscape while holding the phone upright: tap the frame button in the bottom bar.
-• 360° Lock crops the most; Auto Level crops less and fixes tilts up to ±30°.
+• Tap the running-figure icon (top left) to choose Steady or Steady + horizon lock.
+• The frame button (bottom left) records landscape while you hold the phone upright, or portrait while you hold it sideways.
+• Tap the four dots (bottom right) for quick controls: torch, timer, ratio, video size, brightness, grid and settings.
 
-One-handed gestures
-• Tap to focus, long-press to lock focus and exposure.
-• Swipe up or down on the preview to change brightness.
-• Drag sideways on the lens buttons (or pinch) to zoom.
-• Swipe left or right to switch Photo / Video / Time-lapse.
+Gestures
+• Tap to focus, then drag up or down to change the brightness. Long-press locks focus and exposure.
+• Swipe left or right to change mode. Swipe up or down to switch cameras.
+• Drag sideways on the zoom buttons, or pinch, to zoom.
+• While recording: pause, and take photos from the video.
 • Volume keys take a photo or start recording.</string>
     <string name="got_it">Got it</string>
 </resources>

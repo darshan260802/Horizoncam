@@ -5,24 +5,28 @@ Horizon-locked video for every Android phone. HorizonCam brings the Galaxy S26 "
 ## Features
 
 **Horizon lock**
-- **360° Lock**: the horizon stays level through a full rotation. The camera frame is cropped to the circle that stays inside the sensor at every angle.
-- **Auto Level**: corrects tilts up to ±15°, ±30° or ±45° and crops less, so you keep more detail.
+- **Steady + horizon lock**: the horizon stays level through a full rotation. The camera frame is cropped to the circle that stays inside the sensor at every angle.
+- **Steady**: corrects tilts up to ±15°, ±30° or ±45° and crops less, so you keep more detail.
 - **Frame orientation**: Auto, Landscape or Portrait. You can record landscape video while holding the phone upright, or the other way round.
-- **Gimbal view** preview shows the full camera view with the level recording frame (yellow, red while recording) rotating with the horizon. **Output view** shows exactly what gets saved.
+- The viewfinder shows exactly what gets saved. Settings › Viewfinder › *Gimbal view* instead shows the full camera view with the level recording frame rotating with the horizon.
 - Every camera frame is matched to the gyro reading taken at that frame's exposure time (200 Hz ring buffer, exposure and rolling-shutter compensated). This keeps the lock tight, without lag or wobble.
 - **Steady** mode adds the camera's own stabilization (preview EIS on Android 13+, OIS) with a smooth lock response. **Lock only** gives a rigid, perfectly locked horizon.
 - **Ultra-wide for 360°** switches to the widest lens to make up for the crop.
 
 **Capture**
-- Video: 720p / 1080p / 1440p / 4K, 30 or 60 fps, H.264 or HEVC, standard or high bitrate, stereo AAC audio.
-- **Horizon-locked time-lapse / hyperlapse** from 2× to 60×.
+- Video: HD / FHD / QHD / UHD, 30 or 60 fps, H.264 or HEVC, standard or high bitrate, stereo AAC audio.
+- Pause and resume while recording; take photos from the video while recording.
+- **Horizon-locked hyperlapse** from 2× to 60×.
+- **Picture processing**: the phone's own Auto / HDR / Night photo processing where the phone offers it to apps (Camera2 extensions, Android 12+).
 - **Leveled photos**: the JPEG is straightened using the phone's orientation at the exact moment of exposure, then cropped to 4:3, 16:9 or 1:1.
 - Camera input resolution is chosen automatically so the crop keeps full output detail where the hardware allows.
 
-**One-handed UI**
-- Every control is in the bottom third: a quick bar with More, Lock, Frame, Light, Timer and Adjust, plus lens buttons, modes and the shutter.
-- Pop-up option rows show every choice at once; the settings bottom sheet uses tap-to-choose options.
-- Drag sideways on the lens buttons to zoom. Swipe up or down on the preview to change brightness. Swipe sideways to change mode.
+**Familiar layout** (modelled on the current Galaxy camera, with original icons)
+- Top: stabilization / horizon lock menu on the left, video size chip on the right.
+- Bottom: frame button, zoom buttons and quick controls, then the PHOTO / VIDEO / HYPERLAPSE carousel, then gallery, shutter and camera switch. While recording: pause and snapshot buttons.
+- Quick controls panel: settings, torch, timer, ratio, video size or picture processing, brightness and white balance, grid and level.
+- Settings screen with a large title, grouped cards, switches and choice dialogs.
+- Swipe sideways to change mode, swipe up or down to switch cameras, drag after tap-to-focus to change brightness, drag sideways on the zoom buttons to zoom.
 - Smooth transitions when switching camera or mode, plus haptic feedback.
 
 **Image quality**
@@ -33,14 +37,14 @@ Horizon-locked video for every Android phone. HorizonCam brings the Galaxy S26 "
 **Camera controls**
 - Lens buttons (ultra-wide / 1× / 2× / tele where available), pinch to zoom.
 - Tap to focus and meter. Long-press for AE/AF lock.
-- Exposure compensation and white balance presets.
+- Brightness (exposure compensation) and white balance presets.
 - Torch, 3 s / 10 s self-timer, rule-of-thirds grid.
 - Spirit level with haptic tick when the phone is level.
 - Volume keys as shutter or zoom. Front camera with optional mirroring.
 - Saves to `DCIM/HorizonCam`, with a last-capture thumbnail.
 
 **Testing helpers**
-- Settings › About › *Camera diagnostics*: copyable device and camera report, plus recent errors.
+- Settings › About › *Camera diagnostics*: copyable device and camera report (including which photo processing extensions the phone offers), plus recent errors.
 - If the app crashes, the next launch opens a crash report screen with Copy and Share buttons. This also works for crashes during start-up and for native or driver crashes: the last start-up step is recorded.
 
 ## Install

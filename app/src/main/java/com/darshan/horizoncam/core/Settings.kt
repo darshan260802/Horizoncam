@@ -106,7 +106,7 @@ class Settings(context: Context) {
         set(v) = putInt("sharpness", v)
 
     var previewStyle: PreviewStyle
-        get() = enumPref("previewStyle", PreviewStyle.GIMBAL)
+        get() = enumPref("previewStyle", PreviewStyle.OUTPUT)
         set(v) = putEnum("previewStyle", v)
 
     var grid: Boolean
@@ -114,7 +114,7 @@ class Settings(context: Context) {
         set(v) = putBool("grid", v)
 
     var levelIndicator: Boolean
-        get() = p.getBoolean("levelIndicator", true)
+        get() = p.getBoolean("levelIndicator", false)
         set(v) = putBool("levelIndicator", v)
 
     var volumeAction: VolumeAction
@@ -140,6 +140,11 @@ class Settings(context: Context) {
     var useFront: Boolean
         get() = p.getBoolean("useFront", false)
         set(v) = putBool("useFront", v)
+
+    /** Photo processing: -1 = standard, otherwise a Camera2 extension id (0 auto, 3 HDR, 4 night). */
+    var photoProcessing: Int
+        get() = p.getInt("photoProcessing", -1)
+        set(v) = putInt("photoProcessing", v)
 
     var showHints: Boolean
         get() = p.getBoolean("showHints", true)
