@@ -29,7 +29,9 @@ class CameraInfo(val id: String, val chars: CameraCharacteristics) {
     val maxAfRegions: Int = chars.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AF) ?: 0
     val maxAeRegions: Int = chars.get(CameraCharacteristics.CONTROL_MAX_REGIONS_AE) ?: 0
     val evRange: Range<Int> = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_RANGE) ?: Range(0, 0)
-    val evStep: Float = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)?.toFloat() ?: 0f
+    // Explicit numerator/denominator: Rational also has a hidden toFloat() that apps may not call.
+    val evStep: Float = chars.get(CameraCharacteristics.CONTROL_AE_COMPENSATION_STEP)
+        ?.let { if (it.denominator != 0) it.numerator.toFloat() / it.denominator else 0f } ?: 0f
     val fpsRanges: Array<Range<Int>> = chars.get(CameraCharacteristics.CONTROL_AE_AVAILABLE_TARGET_FPS_RANGES) ?: arrayOf()
     val videoStabModes: IntArray = chars.get(CameraCharacteristics.CONTROL_AVAILABLE_VIDEO_STABILIZATION_MODES) ?: IntArray(0)
     val oisModes: IntArray = chars.get(CameraCharacteristics.LENS_INFO_AVAILABLE_OPTICAL_STABILIZATION) ?: IntArray(0)

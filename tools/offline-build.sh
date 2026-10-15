@@ -11,6 +11,11 @@
 #   - Android framework jars published by Robolectric (Maven Central)
 #   - Google's official D8 dexer (R8 release jar on storage.googleapis.com)
 #
+# Caveat: this compiles against Robolectric's *full* framework jar, which also contains hidden
+# (@hide) APIs. Kotlin can silently bind to one of them (e.g. Rational.toFloat()), which then
+# crashes on real devices. APKs for testers should come from CI (public SDK); use this script
+# only as a fallback.
+#
 # Usage: tools/offline-build.sh [output.apk]
 set -euo pipefail
 
