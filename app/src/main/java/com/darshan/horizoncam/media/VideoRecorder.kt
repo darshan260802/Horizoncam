@@ -165,7 +165,10 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
 
     @Volatile var isRecording = false; private set
     @Volatile var lastPtsNs = 0L; private set
-    private var startElapsed = 0L
+    @Volatile var isPaused = false; private set
+    private val pausedTotalNs = AtomicLong(0)
+    private var pauseStartedNs = 0L
+    private var startMono = 0L
 
     private var target: MediaSaver.Target? = null
     private var muxer: MuxerHolder? = null
@@ -177,7 +180,26 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
     @Volatile private var videoEosSignaled = false
     private val t0Mono = AtomicLong(-1)
 
-    val elapsedMs: Long get() = if (isRecording) SystemClock.elapsedRealtime() - startElapsed else 0L
+    /** Recorded duration so far, excluding pauses. */
+    val elapsedMs: Long
+        get() {
+            if (!isRecording) return 0L
+            val now = System.nanoTime()
+            val pausedNow = if (isPaused) now - pauseStartedNs else 0L
+            return (now - startMono - pausedTotalNs.get() - pausedNow) / 1_000_000L
+        }
+
+    fun pause() {
+        if (!isRecording || isPaused) return
+        pauseStartedNs = System.nanoTime()
+        isPaused = true
+    }
+
+    fun resume() {
+        if (!isPaused) return
+        pausedTotalNs.addAndGet(System.nanoTime() - pauseStartedNs)
+        isPaused = false
+    }
 
     fun start(cfg: Config): String? {
         if (isRecording) return "Already recording"
@@ -200,6 +222,8 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
             t0Mono.set(-1)
             lastPtsNs = 0
             videoEosSignaled = false
+            isPaused = false
+            pausedTotalNs.set(0)
 
             val vt = Thread({ drainVideo(codec, holder) }, "VideoDrain")
             videoThread = vt
@@ -215,9 +239,11 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
             val ok = renderer.startEncoding(surface, cfg.width, cfg.height, cfg.rotate90, cfg.timelapse, cfg.fps, object : EncoderSink {
                 override fun onFirstFrame(monoNs: Long) { t0Mono.set(monoNs) }
                 override fun onFrameEncoded(ptsNs: Long) { lastPtsNs = ptsNs }
+                override fun isPaused(): Boolean = this@VideoRecorder.isPaused
+                override fun pausedNs(): Long = pausedTotalNs.get()
             })
             if (!ok) throw IllegalStateException("Renderer could not attach to the encoder")
-            startElapsed = SystemClock.elapsedRealtime()
+            startMono = System.nanoTime()
             isRecording = true
             return null
         } catch (e: Exception) {
@@ -228,15 +254,22 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
     }
 
     private fun createVideoCodec(cfg: Config): MediaCodec {
-        fun format(withProfile: Boolean): MediaFormat {
+        fun format(withProfile: Boolean, withColor: Boolean): MediaFormat {
             val f = MediaFormat.createVideoFormat(cfg.mime, cfg.width, cfg.height)
             f.setInteger(MediaFormat.KEY_COLOR_FORMAT, MediaCodecInfo.CodecCapabilities.COLOR_FormatSurface)
             f.setInteger(MediaFormat.KEY_BIT_RATE, cfg.bitrate)
             f.setInteger(MediaFormat.KEY_FRAME_RATE, cfg.fps)
             f.setInteger(MediaFormat.KEY_I_FRAME_INTERVAL, 1)
+            f.setInteger(MediaFormat.KEY_PRIORITY, 0) // real-time
             if (withProfile && cfg.mime == MediaFormat.MIMETYPE_VIDEO_AVC) {
                 f.setInteger(MediaFormat.KEY_PROFILE, MediaCodecInfo.CodecProfileLevel.AVCProfileHigh)
                 f.setInteger(MediaFormat.KEY_LEVEL, MediaCodecInfo.CodecProfileLevel.AVCLevel52)
+            }
+            if (withColor) {
+                // Tag the stream as standard HD video so players show the intended colours.
+                f.setInteger(MediaFormat.KEY_COLOR_STANDARD, MediaFormat.COLOR_STANDARD_BT709)
+                f.setInteger(MediaFormat.KEY_COLOR_RANGE, MediaFormat.COLOR_RANGE_LIMITED)
+                f.setInteger(MediaFormat.KEY_COLOR_TRANSFER, MediaFormat.COLOR_TRANSFER_SDR_VIDEO)
             }
             return f
         }
@@ -245,24 +278,23 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
                 ?.getCapabilitiesForType(cfg.mime)?.profileLevels
                 ?.any { it.profile == MediaCodecInfo.CodecProfileLevel.AVCProfileHigh } ?: false
         } catch (e: Exception) { false }
-        if (highSupported) {
+        val attempts = mutableListOf<MediaFormat>()
+        if (highSupported) attempts.add(format(withProfile = true, withColor = true))
+        attempts.add(format(withProfile = false, withColor = true))
+        attempts.add(format(withProfile = false, withColor = false))
+        var last: Exception? = null
+        for (f in attempts) {
             val c = MediaCodec.createByCodecName(cfg.codecName)
             try {
-                c.configure(format(true), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
+                c.configure(f, null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
                 return c
             } catch (e: Exception) {
-                Log.w(TAG, "High profile rejected, retrying with defaults", e)
+                Log.w(TAG, "Encoder rejected $f", e)
+                last = e
                 c.release()
             }
         }
-        val c = MediaCodec.createByCodecName(cfg.codecName)
-        try {
-            c.configure(format(false), null, null, MediaCodec.CONFIGURE_FLAG_ENCODE)
-        } catch (e: Exception) {
-            c.release()
-            throw e
-        }
-        return c
+        throw last ?: IllegalStateException("Encoder configuration failed")
     }
 
     private fun drainVideo(codec: MediaCodec, holder: MuxerHolder) {
@@ -395,8 +427,8 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
                     anchorNs + chunkStart * 1_000_000_000L / rate
                 }
                 val t0 = t0Mono.get()
-                if (t0 < 0) continue
-                var ptsUs = (ptsNs - t0) / 1000
+                if (t0 < 0 || isPaused) continue
+                var ptsUs = (ptsNs - t0 - pausedTotalNs.get()) / 1000
                 if (ptsUs < 0) continue
                 if (ptsUs <= lastPtsUs) ptsUs = lastPtsUs + 1
                 // Queue the chunk (split if the codec buffer is smaller).
@@ -436,6 +468,7 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
     fun stop() {
         if (!isRecording) return
         isRecording = false
+        isPaused = false
         renderer.stopEncoding()
         val codec = videoCodec
         try {
@@ -490,7 +523,8 @@ class VideoRecorder(private val context: Context, private val renderer: HorizonR
         private const val TAG = "VideoRecorder"
 
         fun bitrateFor(mime: String, w: Int, h: Int, fps: Int, high: Boolean): Int {
-            val bpp = if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC) (if (high) 0.20 else 0.13) else (if (high) 0.30 else 0.20)
+            // Bits per pixel per frame; roughly matches or beats the stock camera app.
+            val bpp = if (mime == MediaFormat.MIMETYPE_VIDEO_HEVC) (if (high) 0.26 else 0.16) else (if (high) 0.40 else 0.25)
             return (w.toDouble() * h * fps * bpp).toInt().coerceIn(2_000_000, 120_000_000)
         }
 

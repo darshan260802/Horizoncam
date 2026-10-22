@@ -51,6 +51,26 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
     private var focusLocked = false
     private var flashStart = 0L
     private var wasLevel = false
+    private var evFraction = 0.5f
+    private var evText = ""
+    private var evShownAt = 0L
+    private var labelText = ""
+    private var labelShownAt = 0L
+
+    /** Exposure drag indicator: [fraction] 0 = darkest, 1 = brightest. */
+    fun showEv(fraction: Float, text: String) {
+        evFraction = fraction.coerceIn(0f, 1f)
+        evText = text
+        evShownAt = SystemClock.uptimeMillis()
+        invalidate()
+    }
+
+    /** Large transient label (e.g. zoom factor while dragging). */
+    fun showLabel(text: String) {
+        labelText = text
+        labelShownAt = SystemClock.uptimeMillis()
+        invalidate()
+    }
 
     fun showFocus(x: Float, y: Float, locked: Boolean) {
         focusX = x; focusY = y
@@ -174,6 +194,50 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
             } else {
                 focusStart = 0
             }
+        }
+
+        // ---- exposure indicator ----
+        if (evShownAt > 0) {
+            val age = now - evShownAt
+            if (age < 1400) {
+                val a = if (age < 1000) 1f else 1f - (age - 1000) / 400f
+                val x = area.right - 34 * density
+                val half = min(area.height() * 0.28f, 110 * density)
+                linePaint.color = Color.WHITE
+                linePaint.alpha = (150 * a).toInt()
+                linePaint.strokeWidth = 2f * density
+                canvas.drawLine(x, cy - half, x, cy + half, linePaint)
+                val ky = cy + half - 2 * half * evFraction
+                linePaint.color = 0xFFFFC83D.toInt()
+                linePaint.alpha = (255 * a).toInt()
+                canvas.drawCircle(x, ky, 9 * density, linePaint)
+                canvas.save()
+                canvas.translate(x - 30 * density, ky)
+                canvas.rotate(uiRotation)
+                textPaint.textSize = 13 * density
+                textPaint.color = 0xFFFFC83D.toInt()
+                textPaint.alpha = (255 * a).toInt()
+                canvas.drawText(evText, 0f, 5 * density, textPaint)
+                textPaint.alpha = 255
+                canvas.restore()
+            } else evShownAt = 0
+        }
+
+        // ---- transient label ----
+        if (labelShownAt > 0) {
+            val age = now - labelShownAt
+            if (age < 1100) {
+                val a = if (age < 700) 1f else 1f - (age - 700) / 400f
+                canvas.save()
+                canvas.translate(cx, area.top + min(area.height() * 0.18f, 120 * density))
+                canvas.rotate(uiRotation)
+                textPaint.textSize = 30 * density
+                textPaint.color = 0xFFFFC83D.toInt()
+                textPaint.alpha = (255 * a).toInt()
+                canvas.drawText(labelText, 0f, 10 * density, textPaint)
+                textPaint.alpha = 255
+                canvas.restore()
+            } else labelShownAt = 0
         }
 
         // ---- countdown ----

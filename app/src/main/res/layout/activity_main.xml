@@ -10,168 +10,170 @@
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
+    <!-- Fades the preview while the camera switches. -->
+    <View
+        android:id="@+id/curtain"
+        android:layout_width="match_parent"
+        android:layout_height="match_parent"
+        android:background="@android:color/black" />
+
     <com.darshan.horizoncam.ui.OverlayView
         android:id="@+id/overlay"
         android:layout_width="match_parent"
         android:layout_height="match_parent" />
 
-    <!-- Top controls -->
-    <LinearLayout
+    <!-- Top bar: stabilization / horizon lock on the left, resolution on the right. -->
+    <FrameLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
-        android:layout_height="wrap_content"
+        android:layout_height="56dp"
         android:layout_gravity="top"
-        android:gravity="center_vertical"
-        android:orientation="horizontal"
-        android:paddingStart="8dp"
-        android:paddingTop="8dp"
-        android:paddingEnd="8dp"
-        android:paddingBottom="4dp">
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
 
         <ImageButton
-            android:id="@+id/btnSettings"
-            style="@style/TopIcon"
-            android:contentDescription="Settings"
-            android:src="@drawable/ic_settings" />
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <TextView
-            android:id="@+id/chipLock"
-            style="@style/Chip"
-            android:drawableStart="@drawable/ic_360"
-            android:text="360°" />
-
-        <TextView
-            android:id="@+id/chipFrame"
-            style="@style/Chip"
-            android:drawableStart="@drawable/ic_orientation_auto"
-            android:text="AUTO" />
-
-        <Space
-            android:layout_width="0dp"
-            android:layout_height="1dp"
-            android:layout_weight="1" />
-
-        <ImageButton
-            android:id="@+id/btnTorch"
-            style="@style/TopIcon"
-            android:contentDescription="Torch"
-            android:src="@drawable/ic_flashlight_off" />
-
-        <ImageButton
-            android:id="@+id/btnTimer"
-            style="@style/TopIcon"
-            android:contentDescription="Self timer"
-            android:src="@drawable/ic_timer_off" />
-
-        <ImageButton
-            android:id="@+id/btnEv"
-            style="@style/TopIcon"
-            android:contentDescription="Exposure and white balance"
-            android:src="@drawable/ic_tune" />
-    </LinearLayout>
-
-    <!-- Status line -->
-    <LinearLayout
-        android:id="@+id/statusRow"
-        android:layout_width="wrap_content"
-        android:layout_height="wrap_content"
-        android:layout_gravity="top|center_horizontal"
-        android:layout_marginTop="60dp"
-        android:gravity="center"
-        android:orientation="horizontal">
+            android:id="@+id/btnSteady"
+            android:layout_width="48dp"
+            android:layout_height="48dp"
+            android:layout_gravity="start|center_vertical"
+            android:background="?android:attr/selectableItemBackgroundBorderless"
+            android:contentDescription="Stabilization and horizon lock"
+            android:scaleType="center"
+            android:src="@drawable/ic_horizon_lock"
+            android:tint="@android:color/white" />
 
         <TextView
             android:id="@+id/recTime"
             android:layout_width="wrap_content"
-            android:layout_height="28dp"
-            android:layout_marginEnd="6dp"
+            android:layout_height="30dp"
+            android:layout_gravity="center"
             android:background="@drawable/bg_rec"
+            android:fontFamily="sans-serif-medium"
             android:gravity="center"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
             android:text="00:00"
             android:textColor="@android:color/white"
             android:textSize="14sp"
-            android:textStyle="bold"
             android:visibility="gone" />
 
         <TextView
             android:id="@+id/infoText"
             android:layout_width="wrap_content"
-            android:layout_height="28dp"
-            android:background="@drawable/bg_pill"
-            android:gravity="center"
-            android:paddingStart="12dp"
-            android:paddingEnd="12dp"
-            android:textColor="#E6FFFFFF"
-            android:textSize="12sp" />
-    </LinearLayout>
+            android:layout_height="wrap_content"
+            android:layout_gravity="center"
+            android:textColor="#B3FFFFFF"
+            android:textSize="11.5sp" />
 
-    <!-- Bottom controls -->
+        <TextView
+            android:id="@+id/chipRes"
+            android:layout_width="wrap_content"
+            android:layout_height="30dp"
+            android:layout_gravity="end|center_vertical"
+            android:layout_marginEnd="4dp"
+            android:background="@drawable/bg_chip_outline"
+            android:contentDescription="Resolution"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:paddingStart="10dp"
+            android:paddingEnd="10dp"
+            android:text="FHD 30"
+            android:textColor="@android:color/white"
+            android:textSize="12.5sp" />
+    </FrameLayout>
+
+    <!-- Drop-down menus under the top bar. -->
+    <LinearLayout
+        android:id="@+id/steadyMenu"
+        android:layout_width="300dp"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="60dp"
+        android:background="@drawable/bg_menu"
+        android:orientation="vertical"
+        android:paddingTop="8dp"
+        android:paddingBottom="8dp"
+        android:visibility="gone" />
+
+    <LinearLayout
+        android:id="@+id/resMenu"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|end"
+        android:layout_marginTop="60dp"
+        android:layout_marginEnd="12dp"
+        android:background="@drawable/bg_menu"
+        android:orientation="vertical"
+        android:padding="11dp"
+        android:visibility="gone" />
+
+    <!-- Bottom: quick controls, zoom capsule, modes, shutter row. -->
     <LinearLayout
         android:id="@+id/bottomPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
         android:orientation="vertical"
-        android:paddingBottom="12dp">
+        android:paddingBottom="8dp">
 
-        <LinearLayout
-            android:id="@+id/evPanel"
+        <com.darshan.horizoncam.ui.QuickPanel
+            android:id="@+id/quickPanel"
             android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_marginStart="16dp"
-            android:layout_marginEnd="16dp"
+            android:layout_marginStart="10dp"
+            android:layout_marginEnd="10dp"
             android:layout_marginBottom="8dp"
-            android:background="@drawable/bg_toast"
-            android:orientation="vertical"
-            android:padding="12dp"
-            android:visibility="gone">
+            android:visibility="gone" />
 
-            <TextView
-                android:id="@+id/evLabel"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Exposure 0.0"
-                android:textColor="@android:color/white"
-                android:textSize="13sp" />
+        <FrameLayout
+            android:id="@+id/zoomArea"
+            android:layout_width="match_parent"
+            android:layout_height="56dp">
 
-            <SeekBar
-                android:id="@+id/evSeek"
-                android:layout_width="match_parent"
-                android:layout_height="36dp" />
+            <ImageButton
+                android:id="@+id/btnFrame"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="18dp"
+                android:background="@drawable/bg_round_glass"
+                android:contentDescription="Recording frame orientation"
+                android:scaleType="center"
+                android:src="@drawable/ic_orientation_auto"
+                android:tint="@android:color/white" />
 
-            <LinearLayout
-                android:id="@+id/wbRow"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
+            <com.darshan.horizoncam.ui.ZoomBar
+                android:id="@+id/zoomRow"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:layout_gravity="center"
+                android:background="@drawable/bg_capsule"
                 android:gravity="center"
-                android:orientation="horizontal" />
-        </LinearLayout>
+                android:orientation="horizontal"
+                android:paddingStart="4dp"
+                android:paddingEnd="4dp" />
 
-        <LinearLayout
-            android:id="@+id/zoomRow"
-            android:layout_width="wrap_content"
-            android:layout_height="44dp"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="10dp"
-            android:background="@drawable/bg_pill"
-            android:gravity="center"
-            android:orientation="horizontal"
-            android:paddingStart="4dp"
-            android:paddingEnd="4dp" />
+            <ImageButton
+                android:id="@+id/btnQuick"
+                android:layout_width="46dp"
+                android:layout_height="46dp"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="18dp"
+                android:background="@drawable/bg_round_glass"
+                android:contentDescription="Quick controls"
+                android:scaleType="center"
+                android:src="@drawable/ic_quick_controls"
+                android:tint="@android:color/white" />
+        </FrameLayout>
 
         <LinearLayout
             android:id="@+id/modeRow"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center_horizontal"
-            android:layout_marginBottom="8dp"
+            android:layout_marginTop="6dp"
+            android:layout_marginBottom="6dp"
             android:gravity="center"
             android:orientation="horizontal">
 
@@ -188,29 +190,43 @@
             <TextView
                 android:id="@+id/modeTimelapse"
                 style="@style/ModeText"
-                android:text="TIMELAPSE" />
+                android:text="HYPERLAPSE" />
         </LinearLayout>
 
         <FrameLayout
+            android:id="@+id/controlsRow"
             android:layout_width="match_parent"
-            android:layout_height="96dp">
+            android:layout_height="104dp">
 
             <ImageView
                 android:id="@+id/thumb"
                 android:layout_width="54dp"
                 android:layout_height="54dp"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="36dp"
+                android:layout_marginStart="34dp"
                 android:background="@drawable/bg_thumb"
                 android:contentDescription="Open last capture"
                 android:padding="2dp"
                 android:scaleType="centerCrop"
                 android:src="@drawable/ic_photo_library" />
 
+            <ImageButton
+                android:id="@+id/btnPause"
+                android:layout_width="54dp"
+                android:layout_height="54dp"
+                android:layout_gravity="start|center_vertical"
+                android:layout_marginStart="34dp"
+                android:background="@drawable/bg_round_glass"
+                android:contentDescription="Pause recording"
+                android:scaleType="center"
+                android:src="@drawable/ic_pause"
+                android:tint="@android:color/white"
+                android:visibility="gone" />
+
             <com.darshan.horizoncam.ui.ShutterButton
                 android:id="@+id/shutter"
-                android:layout_width="82dp"
-                android:layout_height="82dp"
+                android:layout_width="80dp"
+                android:layout_height="80dp"
                 android:layout_gravity="center" />
 
             <ImageButton
@@ -218,12 +234,25 @@
                 android:layout_width="54dp"
                 android:layout_height="54dp"
                 android:layout_gravity="end|center_vertical"
-                android:layout_marginEnd="36dp"
-                android:background="@drawable/bg_circle"
+                android:layout_marginEnd="34dp"
+                android:background="@drawable/bg_round_glass"
                 android:contentDescription="Switch camera"
                 android:scaleType="center"
-                android:src="@drawable/ic_cameraswitch"
+                android:src="@drawable/ic_flip_camera_android"
                 android:tint="@android:color/white" />
+
+            <ImageButton
+                android:id="@+id/btnSnap"
+                android:layout_width="54dp"
+                android:layout_height="54dp"
+                android:layout_gravity="end|center_vertical"
+                android:layout_marginEnd="34dp"
+                android:background="@drawable/bg_round_glass"
+                android:contentDescription="Take a photo while recording"
+                android:scaleType="center"
+                android:src="@drawable/ic_photo_camera"
+                android:tint="@android:color/white"
+                android:visibility="gone" />
         </FrameLayout>
     </LinearLayout>
 
@@ -277,10 +306,4 @@
             android:layout_marginTop="24dp"
             android:text="@string/grant" />
     </LinearLayout>
-
-    <FrameLayout
-        android:id="@+id/settingsHost"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent"
-        android:visibility="gone" />
 </FrameLayout>

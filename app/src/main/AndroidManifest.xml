@@ -43,5 +43,17 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
+
+        <activity
+            android:name=".SettingsActivity"
+            android:exported="false"
+            android:label="Camera settings"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
+
+        <!-- Minimal crash report screen; uses only the framework theme on purpose. -->
+        <activity
+            android:name=".CrashReportActivity"
+            android:exported="false"
+            android:theme="@android:style/Theme.DeviceDefault.NoActionBar" />
     </application>
 </manifest>

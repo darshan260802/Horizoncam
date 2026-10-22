@@ -33,7 +33,9 @@ data class SessionSpec(
     val jpegSize: Size?,
     val fps: Int,
     val stabilization: Boolean,
-    val zoomRatio: Float
+    val zoomRatio: Float,
+    /** Camera2 extension (CameraExtensionCharacteristics.EXTENSION_*) for photos, or -1. */
+    val extension: Int = -1
 )
 
 /**
@@ -47,6 +49,10 @@ class CameraController(private val manager: CameraManager, private val listener:
         fun onCameraError(message: String)
         fun onFocusState(focused: Boolean?, x: Float, y: Float)
         fun onExposureInfo(exposureNs: Long, iso: Int, rollingShutterSkewNs: Long)
+        /** The requested photo processing extension could not be used; a normal session runs instead. */
+        fun onExtensionUnavailable()
+        /** True while a photo session uses the phone's own processing (HDR/Night/Auto). */
+        fun onExtensionActive(extension: Int)
     }
 
     fun interface SurfaceProvider {
@@ -87,6 +93,13 @@ class CameraController(private val manager: CameraManager, private val listener:
     private var focusPoint: FloatArray? = null
     private var awaitingFocus = false
     private var photoCallback: PhotoCallback? = null
+    /** High-quality ISP processing; turned off automatically if it costs frame rate. */
+    private var hqProcessing = true
+    /** CameraExtensionSession (API 31+), typed as Any so the class loads on older Android. */
+    private var extSession: Any? = null
+    private var extFailed = false
+    @Volatile private var extStillTimestamp = 0L
+    private val executor = java.util.concurrent.Executor { handler.post(it) }
 
     private val resetFocusRunnable = Runnable { clearFocusInternal() }
 
@@ -141,6 +154,7 @@ class CameraController(private val manager: CameraManager, private val listener:
         photoCallback = null
         try { session?.close() } catch (e: Exception) { }
         session = null
+        closeExtensionSession()
         val d = device
         if (d == null) {
             if (closingDevice == null) closeReader()
@@ -175,6 +189,12 @@ class CameraController(private val manager: CameraManager, private val listener:
         meteringRegion = null
         focusPoint = null
         aeAfLocked = false
+        hqProcessing = true
+        extFailed = false
+        fpsWindowStart = 0L
+        fpsWindowFrames = 0
+        fpsSlowWindows = 0
+        framesSinceStart = 0
         opening = true
         try {
             manager.openCamera(s.cameraId, object : CameraDevice.StateCallback() {
@@ -229,6 +249,11 @@ class CameraController(private val manager: CameraManager, private val listener:
             listener.onCameraError("No working camera configuration found")
             return
         }
+        if (!s.video && s.extension >= 0 && !extFailed && Build.VERSION.SDK_INT >= 31) {
+            if (tryExtensionSession(d, ci, s)) return
+            extFailed = true
+            listener.onExtensionUnavailable()
+        }
         val size = s.inputSizes[sizeIndex]
         val surface = surfaceProvider?.provide(size)
         if (surface == null) {
@@ -239,24 +264,7 @@ class CameraController(private val manager: CameraManager, private val listener:
         val outputs = mutableListOf(surface)
         jpegReader?.close(); jpegReader = null
         if (!s.video && s.jpegSize != null) {
-            val r = ImageReader.newInstance(s.jpegSize.width, s.jpegSize.height, ImageFormat.JPEG, 2)
-            r.setOnImageAvailableListener({ reader ->
-                val img = try { reader.acquireNextImage() } catch (e: Exception) { null }
-                if (img != null) {
-                    val cb = photoCallback
-                    photoCallback = null
-                    try {
-                        val buf = img.planes[0].buffer
-                        val bytes = ByteArray(buf.remaining())
-                        buf.get(bytes)
-                        cb?.onPhoto(bytes, img.timestamp, null)
-                    } catch (e: Exception) {
-                        cb?.onPhoto(null, 0, e.message)
-                    } finally {
-                        img.close()
-                    }
-                }
-            }, handler)
+            val r = makeJpegReader(s.jpegSize)
             jpegReader = r
             outputs.add(r.surface)
         }
@@ -282,6 +290,114 @@ class CameraController(private val manager: CameraManager, private val listener:
             sizeIndex++
             handler.post { if (device === d) createSession() }
         }
+    }
+
+    private fun makeJpegReader(size: Size): ImageReader {
+        val r = ImageReader.newInstance(size.width, size.height, ImageFormat.JPEG, 2)
+        r.setOnImageAvailableListener({ reader ->
+            val img = try { reader.acquireNextImage() } catch (e: Exception) { null }
+            if (img != null) {
+                val cb = photoCallback
+                photoCallback = null
+                try {
+                    val buf = img.planes[0].buffer
+                    val bytes = ByteArray(buf.remaining())
+                    buf.get(bytes)
+                    val ts = if (extStillTimestamp != 0L) extStillTimestamp else img.timestamp
+                    extStillTimestamp = 0L
+                    cb?.onPhoto(bytes, ts, null)
+                } catch (e: Exception) {
+                    cb?.onPhoto(null, 0, e.message)
+                } finally {
+                    img.close()
+                }
+            }
+        }, handler)
+        return r
+    }
+
+    // ------------------------------------------------------------------ camera extensions (API 31+)
+
+    @android.annotation.TargetApi(31)
+    private fun tryExtensionSession(d: CameraDevice, ci: CameraInfo, s: SessionSpec): Boolean {
+        return try {
+            val chars = manager.getCameraExtensionCharacteristics(ci.id)
+            if (!chars.supportedExtensions.contains(s.extension)) return false
+            val prevSizes = chars.getExtensionSupportedSizes(s.extension, android.graphics.SurfaceTexture::class.java)
+            val jpegSizes = chars.getExtensionSupportedSizes(s.extension, ImageFormat.JPEG)
+            if (prevSizes.isEmpty() || jpegSizes.isEmpty()) return false
+            val arrAspect = ci.activeArray.width().toDouble() / ci.activeArray.height()
+            fun area(z: Size) = z.width.toLong() * z.height
+            val jpeg = jpegSizes.filter { area(it) <= 16_800_000L }
+                .sortedWith(compareByDescending<Size> { kotlin.math.abs(it.width.toDouble() / it.height - arrAspect) < 0.03 }.thenByDescending { area(it) })
+                .firstOrNull() ?: jpegSizes.first()
+            val target = jpeg.width.toDouble() / jpeg.height
+            val prev = prevSizes.filter { kotlin.math.abs(it.width.toDouble() / it.height - target) < 0.03 && area(it) <= 1920L * 1440 }
+                .maxByOrNull { area(it) }
+                ?: prevSizes.filter { area(it) <= 1920L * 1080 }.maxByOrNull { area(it) }
+                ?: prevSizes.first()
+            val surface = surfaceProvider?.provide(prev) ?: return false
+            inputSurface = surface
+            jpegReader?.close()
+            val reader = makeJpegReader(jpeg)
+            jpegReader = reader
+            val outputs = listOf(
+                android.hardware.camera2.params.OutputConfiguration(surface),
+                android.hardware.camera2.params.OutputConfiguration(reader.surface)
+            )
+            val gen = generation
+            val cfg = android.hardware.camera2.params.ExtensionSessionConfiguration(
+                s.extension, outputs, executor,
+                object : android.hardware.camera2.CameraExtensionSession.StateCallback() {
+                    override fun onConfigured(session: android.hardware.camera2.CameraExtensionSession) {
+                        if (gen != generation || device !== d) { session.close(); return }
+                        extSession = session
+                        applyRepeating()
+                        listener.onCameraOpened(ci, prev)
+                        listener.onExtensionActive(s.extension)
+                    }
+
+                    override fun onConfigureFailed(session: android.hardware.camera2.CameraExtensionSession) {
+                        Log.w(TAG, "extension ${s.extension} configure failed")
+                        if (gen != generation) return
+                        extFailed = true
+                        listener.onExtensionUnavailable()
+                        handler.post { if (device === d) createSession() }
+                    }
+                })
+            d.createExtensionSession(cfg)
+            true
+        } catch (e: Exception) {
+            Log.w(TAG, "extension session failed", e)
+            false
+        }
+    }
+
+    private fun closeExtensionSession() {
+        if (Build.VERSION.SDK_INT >= 31) {
+            try { (extSession as? android.hardware.camera2.CameraExtensionSession)?.close() } catch (e: Exception) { }
+        }
+        extSession = null
+    }
+
+    @android.annotation.TargetApi(31)
+    private fun extensionRepeating(es: android.hardware.camera2.CameraExtensionSession, req: CaptureRequest) {
+        es.setRepeatingRequest(req, executor, object : android.hardware.camera2.CameraExtensionSession.ExtensionCaptureCallback() {})
+    }
+
+    @android.annotation.TargetApi(31)
+    private fun extensionCapture(es: android.hardware.camera2.CameraExtensionSession, req: CaptureRequest) {
+        es.capture(req, executor, object : android.hardware.camera2.CameraExtensionSession.ExtensionCaptureCallback() {
+            override fun onCaptureStarted(session: android.hardware.camera2.CameraExtensionSession, request: CaptureRequest, timestamp: Long) {
+                extStillTimestamp = timestamp
+            }
+
+            override fun onCaptureFailed(session: android.hardware.camera2.CameraExtensionSession, request: CaptureRequest) {
+                val c = photoCallback
+                photoCallback = null
+                c?.onPhoto(null, 0, "Capture failed")
+            }
+        })
     }
 
     // ------------------------------------------------------------------ requests
@@ -336,9 +452,32 @@ class CameraController(private val manager: CameraManager, private val listener:
         } else {
             b.set(CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE, CameraMetadata.CONTROL_VIDEO_STABILIZATION_MODE_OFF)
         }
+        // Image processing: best quality for video at <= 30 fps and for stills.
+        val still = template == CameraDevice.TEMPLATE_STILL_CAPTURE
+        applyProcessing(b, ci, still || (s.video && s.fps <= 30 && hqProcessing))
         // Zoom
         applyZoom(b, ci)
         return b
+    }
+
+    private fun applyProcessing(b: CaptureRequest.Builder, ci: CameraInfo, hq: Boolean) {
+        fun pick(modes: IntArray, high: Int, fast: Int): Int? = when {
+            hq && modes.contains(high) -> high
+            modes.contains(fast) -> fast
+            else -> null
+        }
+        pick(ci.noiseModes, CameraMetadata.NOISE_REDUCTION_MODE_HIGH_QUALITY, CameraMetadata.NOISE_REDUCTION_MODE_FAST)
+            ?.let { b.set(CaptureRequest.NOISE_REDUCTION_MODE, it) }
+        pick(ci.edgeModes, CameraMetadata.EDGE_MODE_HIGH_QUALITY, CameraMetadata.EDGE_MODE_FAST)
+            ?.let { b.set(CaptureRequest.EDGE_MODE, it) }
+        pick(ci.aberrationModes, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_HIGH_QUALITY, CameraMetadata.COLOR_CORRECTION_ABERRATION_MODE_FAST)
+            ?.let { b.set(CaptureRequest.COLOR_CORRECTION_ABERRATION_MODE, it) }
+        pick(ci.hotPixelModes, CameraMetadata.HOT_PIXEL_MODE_HIGH_QUALITY, CameraMetadata.HOT_PIXEL_MODE_FAST)
+            ?.let { b.set(CaptureRequest.HOT_PIXEL_MODE, it) }
+        pick(ci.shadingModes, CameraMetadata.SHADING_MODE_HIGH_QUALITY, CameraMetadata.SHADING_MODE_FAST)
+            ?.let { b.set(CaptureRequest.SHADING_MODE, it) }
+        pick(ci.toneMapModes, CameraMetadata.TONEMAP_MODE_HIGH_QUALITY, CameraMetadata.TONEMAP_MODE_FAST)
+            ?.let { b.set(CaptureRequest.TONEMAP_MODE, it) }
     }
 
     private fun applyZoom(b: CaptureRequest.Builder, ci: CameraInfo) {
@@ -359,8 +498,35 @@ class CameraController(private val manager: CameraManager, private val listener:
         return Rect(l, t, l + w, t + h)
     }
 
+    // Frame-rate watchdog: high-quality processing must not cost smoothness.
+    private var fpsWindowStart = 0L
+    private var fpsWindowFrames = 0
+    private var fpsSlowWindows = 0
+    private var framesSinceStart = 0
+
+    private fun watchFrameRate(result: TotalCaptureResult) {
+        val s = spec ?: return
+        if (!s.video || !hqProcessing) return
+        val ts = result.get(CaptureResult.SENSOR_TIMESTAMP) ?: return
+        framesSinceStart++
+        if (framesSinceStart < 30) return
+        if (fpsWindowStart == 0L) { fpsWindowStart = ts; fpsWindowFrames = 0; return }
+        fpsWindowFrames++
+        if (fpsWindowFrames < 45) return
+        val fps = fpsWindowFrames * 1e9 / (ts - fpsWindowStart).coerceAtLeast(1L)
+        fpsWindowStart = ts
+        fpsWindowFrames = 0
+        if (fps < s.fps * 0.87) fpsSlowWindows++ else fpsSlowWindows = 0
+        if (fpsSlowWindows >= 2) {
+            Log.w(TAG, "High-quality processing drops frames (%.1f fps); switching to fast".format(fps))
+            hqProcessing = false
+            applyRepeating()
+        }
+    }
+
     private val repeatingCallback = object : CameraCaptureSession.CaptureCallback() {
         override fun onCaptureCompleted(s: CameraCaptureSession, request: CaptureRequest, result: TotalCaptureResult) {
+            watchFrameRate(result)
             val exp = result.get(CaptureResult.SENSOR_EXPOSURE_TIME) ?: 0L
             val iso = result.get(CaptureResult.SENSOR_SENSITIVITY) ?: 0
             val skew = result.get(CaptureResult.SENSOR_ROLLING_SHUTTER_SKEW) ?: 0L
@@ -377,8 +543,19 @@ class CameraController(private val manager: CameraManager, private val listener:
     }
 
     private fun applyRepeating() {
-        val sess = session ?: return
         val s = spec ?: return
+        val ext = extSession
+        if (ext != null && Build.VERSION.SDK_INT >= 31) {
+            try {
+                val b = buildRequest(CameraDevice.TEMPLATE_PREVIEW) ?: return
+                inputSurface?.let { b.addTarget(it) }
+                extensionRepeating(ext as android.hardware.camera2.CameraExtensionSession, b.build())
+            } catch (e: Exception) {
+                Log.w(TAG, "extension repeating request failed", e)
+            }
+            return
+        }
+        val sess = session ?: return
         try {
             val b = buildRequest(if (s.video) CameraDevice.TEMPLATE_RECORD else CameraDevice.TEMPLATE_PREVIEW) ?: return
             inputSurface?.let { b.addTarget(it) }
@@ -493,6 +670,22 @@ class CameraController(private val manager: CameraManager, private val listener:
         val sess = session
         val reader = jpegReader
         val ci = info
+        val ext = extSession
+        if (ext != null && reader != null && ci != null && Build.VERSION.SDK_INT >= 31) {
+            try {
+                val b = buildRequest(CameraDevice.TEMPLATE_STILL_CAPTURE) ?: run { cb.onPhoto(null, 0, "Camera not ready"); return@post }
+                b.addTarget(reader.surface)
+                b.set(CaptureRequest.JPEG_ORIENTATION, ci.sensorOrientation)
+                b.set(CaptureRequest.JPEG_QUALITY, 95.toByte())
+                photoCallback = cb
+                extStillTimestamp = 0L
+                extensionCapture(ext as android.hardware.camera2.CameraExtensionSession, b.build())
+            } catch (e: Exception) {
+                photoCallback = null
+                cb.onPhoto(null, 0, "Capture error: ${e.message}")
+            }
+            return@post
+        }
         if (sess == null || reader == null || ci == null) {
             cb.onPhoto(null, 0, "Camera not ready")
             return@post
@@ -521,6 +714,21 @@ class CameraController(private val manager: CameraManager, private val listener:
 
     companion object {
         private const val TAG = "CameraController"
+
+        /** Camera2 extensions this camera offers to apps (empty before Android 12). */
+        fun supportedExtensions(manager: CameraManager, cameraId: String): List<Int> =
+            if (Build.VERSION.SDK_INT >= 31) {
+                try { manager.getCameraExtensionCharacteristics(cameraId).supportedExtensions } catch (e: Exception) { emptyList() }
+            } else emptyList()
+
+        fun extensionName(ext: Int): String = when (ext) {
+            0 -> "Auto"
+            1 -> "Face retouch"
+            2 -> "Bokeh"
+            3 -> "HDR"
+            4 -> "Night"
+            else -> "Extension $ext"
+        }
 
         /** Natural-image coordinates (x right, y down, true view) to sensor-normalised coordinates. */
         fun naturalToSensor(nx: Float, ny: Float, sensorOrientation: Int): FloatArray = when ((sensorOrientation % 360 + 360) % 360) {
