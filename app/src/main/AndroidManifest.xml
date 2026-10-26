@@ -14,6 +14,16 @@
         android:name="android.permission.WRITE_EXTERNAL_STORAGE"
         android:maxSdkVersion="28" />
 
+    <!-- Find the phone's gallery app so captures open there directly (Android 11+ package visibility). -->
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_GALLERY" />
+        </intent>
+        <package android:name="com.sec.android.gallery3d" />
+        <package android:name="com.google.android.apps.photos" />
+    </queries>
+
     <application
         android:name=".HorizonApp"
         android:allowBackup="false"

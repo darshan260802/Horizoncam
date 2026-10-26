@@ -61,16 +61,18 @@ class QuickPanel @JvmOverloads constructor(context: Context, attrs: AttributeSet
 
     fun setItems(items: List<QuickItem>) {
         grid.removeAllViews()
+        // Four per row; five when that avoids a nearly empty last row.
+        val cols = if (items.size > 8) 5 else 4
         var row: LinearLayout? = null
         items.forEachIndexed { i, item ->
-            if (i % 4 == 0) {
+            if (i % cols == 0) {
                 row = LinearLayout(context).apply { orientation = HORIZONTAL }
                 grid.addView(row, LayoutParams(LayoutParams.MATCH_PARENT, LayoutParams.WRAP_CONTENT).apply { if (i > 0) topMargin = dp(10f) })
             }
             row!!.addView(cell(item), LayoutParams(0, LayoutParams.WRAP_CONTENT, 1f))
         }
         // Keep the last row aligned to the grid.
-        val rest = (4 - items.size % 4) % 4
+        val rest = (cols - items.size % cols) % cols
         repeat(rest) { row?.addView(View(context), LayoutParams(0, 1, 1f)) }
     }
 

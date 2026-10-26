@@ -153,6 +153,38 @@ class StartupTest {
     }
 
     @Test
+    fun galleryButtonOpensGalleryApp() {
+        val app = RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        addCameras()
+        // A phone with the Samsung gallery installed.
+        val gallery = "com.sec.android.gallery3d"
+        val launcher = android.content.Intent(android.content.Intent.ACTION_MAIN)
+            .addCategory(android.content.Intent.CATEGORY_LAUNCHER).setPackage(gallery)
+        shadowOf(app.packageManager).addResolveInfoForIntent(launcher, android.content.pm.ResolveInfo().apply {
+            activityInfo = android.content.pm.ActivityInfo().apply {
+                packageName = gallery
+                name = "$gallery.Gallery"
+                applicationInfo = android.content.pm.ApplicationInfo().apply { packageName = gallery }
+            }
+        })
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val a = c.get()
+        idle()
+        val f = MainActivity::class.java.getDeclaredField("lastSavedUri")
+        f.isAccessible = true
+        f.set(a, android.net.Uri.parse("content://media/external/images/media/42"))
+        a.findViewById<android.view.View>(R.id.thumb).performClick()
+        val started = shadowOf(a).nextStartedActivity
+        check(started != null && started.`package` == gallery && started.action == "com.android.camera.action.REVIEW") {
+            "expected the gallery review intent, got $started"
+        }
+        check(started.flags and android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+        c.pause().stop().destroy()
+        println("GALLERY-BUTTON OK")
+    }
+
+    @Test
     fun settingsScreenWorks() {
         addCameras()
         val c = Robolectric.buildActivity(SettingsActivity::class.java).setup()

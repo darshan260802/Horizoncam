@@ -4,6 +4,7 @@ import android.Manifest
 import android.animation.ValueAnimator
 import android.app.Activity
 import android.app.AlertDialog
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +15,7 @@ import android.graphics.RectF
 import android.graphics.Typeface
 import android.graphics.drawable.GradientDrawable
 import android.hardware.camera2.CameraManager
+import android.media.AudioManager
 import android.media.MediaActionSound
 import android.media.MediaFormat
 import android.media.MediaMetadataRetriever
@@ -70,6 +72,7 @@ import com.darshan.horizoncam.gl.RenderState
 import com.darshan.horizoncam.media.EncoderSupport
 import com.darshan.horizoncam.media.MediaSaver
 import com.darshan.horizoncam.media.PhotoProcessor
+import com.darshan.horizoncam.media.SoundPolicy
 import com.darshan.horizoncam.media.VideoRecorder
 import com.darshan.horizoncam.sensor.HorizonSensor
 import com.darshan.horizoncam.ui.OverlayView
@@ -253,10 +256,6 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         refreshUi()
         main.post(uiTicker)
 
-        lastSavedUri = settings.lastSavedUri?.let { Uri.parse(it) }
-        lastSavedVideo = settings.lastSavedIsVideo
-        loadThumbnailFor(lastSavedUri, lastSavedVideo)
-
         if (renderer.error != null) toast(renderer.error!!)
         if (!sensor.available) toast("No motion sensor found: horizon lock is unavailable")
         initialized = true
@@ -270,6 +269,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         CrashLogger.step(this, "onResume")
         hideSystemBars()
         syncWithSettings()
+        refreshThumbnail()
         if (hasCameraPermission()) {
             permissionPanel.visibility = View.GONE
             CrashLogger.step(this, "start motion sensor")
@@ -584,6 +584,20 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         if (settings.haptics) root.performHapticFeedback(HapticFeedbackConstants.KEYBOARD_TAP)
     }
 
+    /**
+     * Camera sounds follow the Shutter sound setting and stay quiet when the phone is on silent or
+     * vibrate (MediaActionSound itself would play anyway). Where the law requires the sound
+     * (Android 13+ reports this), it always plays.
+     */
+    private fun playSound(kind: Int) {
+        if (!SoundPolicy.forced()) {
+            if (!settings.shutterSound) return
+            val am = getSystemService(Context.AUDIO_SERVICE) as? AudioManager
+            if (am != null && am.ringerMode != AudioManager.RINGER_MODE_NORMAL) return
+        }
+        sound?.play(kind)
+    }
+
     // ------------------------------------------------------------------ pop-ups
 
     private fun toggleMenu(menu: LinearLayout, build: () -> Unit) {
@@ -803,6 +817,17 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         items += QuickItem("settings", R.drawable.ic_settings, "Settings", "", false) { openSettings() }
         items += QuickItem("torch", if (torchOn) R.drawable.ic_flashlight_on else R.drawable.ic_flashlight_off, "Torch",
             if (torchOn) "On" else "Off", torchOn) { toggleTorch() }
+        val soundOn = SoundPolicy.forced() || settings.shutterSound
+        items += QuickItem("sound", if (soundOn) R.drawable.ic_volume_up else R.drawable.ic_volume_off, "Sound",
+            if (SoundPolicy.forced()) "Required" else onOff(soundOn), false) {
+            if (SoundPolicy.forced()) {
+                toast("The shutter sound can't be turned off in your region")
+            } else {
+                settings.shutterSound = !settings.shutterSound
+                toast(if (settings.shutterSound) "Shutter sound on (muted when the phone is on silent or vibrate)" else "Shutter sound off")
+                refreshQuickPanel()
+            }
+        }
 
         val timerValues = listOf(0, 3, 10)
         items += QuickItem("timer", timerIcon(), "Timer", if (settings.timerSec == 0) "Off" else "${settings.timerSec} sec", settings.timerSec != 0) {
@@ -1442,13 +1467,13 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                     shutter.progress = -1f
                     action()
                 } else {
-                    if (settings.shutterSound) sound?.play(MediaActionSound.FOCUS_COMPLETE)
+                    playSound(MediaActionSound.FOCUS_COMPLETE)
                     main.postDelayed(this, 1000)
                 }
             }
         }
         shutter.progress = 0f
-        if (settings.shutterSound) sound?.play(MediaActionSound.FOCUS_COMPLETE)
+        playSound(MediaActionSound.FOCUS_COMPLETE)
         main.postDelayed(tick, 1000)
         countdownRunnable = tick
     }
@@ -1469,7 +1494,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         photoBusy = true
         overlay.flash()
         if (activeExtension == 4) toast("Hold still…")
-        if (settings.shutterSound) sound?.play(MediaActionSound.SHUTTER_CLICK)
+        playSound(MediaActionSound.SHUTTER_CLICK)
         val params = { up: FloatArray ->
             PhotoProcessor.Params(
                 lockMode = settings.lockMode,
@@ -1585,7 +1610,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
             toast(err)
             return
         }
-        if (settings.shutterSound) sound?.play(MediaActionSound.START_VIDEO_RECORDING)
+        playSound(MediaActionSound.START_VIDEO_RECORDING)
         shutter.recording = true
         hidePopups()
         refreshUi()
@@ -1595,7 +1620,7 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private fun stopRecording() {
         if (!recorder.isRecording) return
         recorder.stop()
-        if (settings.shutterSound) sound?.play(MediaActionSound.STOP_VIDEO_RECORDING)
+        playSound(MediaActionSound.STOP_VIDEO_RECORDING)
         shutter.recording = false
         refreshUi()
     }
@@ -1628,8 +1653,6 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
     private fun onSaved(uri: Uri, video: Boolean, bmp: Bitmap?) {
         lastSavedUri = uri
         lastSavedVideo = video
-        settings.lastSavedUri = uri.toString()
-        settings.lastSavedIsVideo = video
         if (bmp != null) {
             thumb.setImageBitmap(bmp)
             thumb.scaleType = ImageView.ScaleType.CENTER_CROP
@@ -1645,7 +1668,28 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
         thumb.animate().scaleX(1f).scaleY(1f).setDuration(240).setInterpolator(DecelerateInterpolator()).start()
     }
 
-    private fun loadThumbnailFor(uri: Uri?, video: Boolean) {
+    /**
+     * Points the gallery button at the newest capture that still exists (re-checked on every
+     * resume, so deleting a photo in the gallery updates the button).
+     */
+    private fun refreshThumbnail() {
+        worker.execute {
+            val latest = MediaSaver.latestCapture(this)
+            main.post {
+                if (latest == null) {
+                    lastSavedUri = null
+                    thumb.setImageResource(R.drawable.ic_photo_library)
+                    thumb.scaleType = ImageView.ScaleType.CENTER
+                } else if (latest.uri != lastSavedUri || thumb.scaleType != ImageView.ScaleType.CENTER_CROP) {
+                    lastSavedUri = latest.uri
+                    lastSavedVideo = latest.isVideo
+                    loadThumbnailFor(latest.uri, latest.isVideo, bounce = false)
+                }
+            }
+        }
+    }
+
+    private fun loadThumbnailFor(uri: Uri?, video: Boolean, bounce: Boolean = true) {
         if (uri == null) return
         worker.execute {
             val bmp: Bitmap? = try {
@@ -1666,27 +1710,66 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
                 }
             } catch (e: Exception) { null }
             if (bmp != null) main.post {
+                if (uri != lastSavedUri) return@post
                 thumb.setImageBitmap(bmp)
                 thumb.scaleType = ImageView.ScaleType.CENTER_CROP
-                bounceThumb()
+                if (bounce) bounceThumb()
             }
         }
     }
 
+    /**
+     * Opens the last capture straight in the phone's gallery app (no "open with" chooser). The
+     * camera "review" action comes first: galleries that support it let you swipe through
+     * recent captures.
+     */
     private fun openLastCapture() {
         val uri = lastSavedUri
         if (uri == null) {
             toast("Nothing captured yet")
             return
         }
-        try {
-            val i = Intent(Intent.ACTION_VIEW)
-            i.setDataAndType(uri, if (lastSavedVideo) "video/mp4" else "image/jpeg")
-            i.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-            startActivity(i)
-        } catch (e: Exception) {
-            toast("No app found to open the file")
+        val mime = if (lastSavedVideo) "video/mp4" else "image/jpeg"
+        fun intent(action: String, pkg: String?) = Intent(action).apply {
+            setDataAndType(uri, mime)
+            addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+            if (pkg != null) setPackage(pkg)
         }
+        val gallery = galleryPackage()
+        val attempts = ArrayList<Intent>()
+        if (gallery != null) {
+            attempts += intent(ACTION_REVIEW, gallery)
+            attempts += intent(Intent.ACTION_VIEW, gallery)
+        }
+        attempts += intent(Intent.ACTION_VIEW, null)
+        for (i in attempts) {
+            try {
+                startActivity(i)
+                return
+            } catch (e: ActivityNotFoundException) {
+            } catch (e: SecurityException) {
+            }
+        }
+        toast("No app found to open the file")
+    }
+
+    /** The phone's gallery app: the default "gallery" app, else a well-known one that is installed. */
+    private fun galleryPackage(): String? {
+        try {
+            val selector = Intent.makeMainSelectorActivity(Intent.ACTION_MAIN, Intent.CATEGORY_APP_GALLERY)
+            val ri = packageManager.resolveActivity(selector, PackageManager.MATCH_DEFAULT_ONLY)
+            val pkg = ri?.activityInfo?.packageName
+            // "android" is the system chooser, shown when there is no default.
+            if (pkg != null && pkg != "android") return pkg
+        } catch (e: Exception) {
+        }
+        for (pkg in KNOWN_GALLERIES) {
+            try {
+                if (packageManager.getLaunchIntentForPackage(pkg) != null) return pkg
+            } catch (e: Exception) {
+            }
+        }
+        return null
     }
 
     // ------------------------------------------------------------------ modes
@@ -1959,6 +2042,10 @@ class MainActivity : Activity(), CameraController.Listener, VideoRecorder.Listen
 
     companion object {
         private const val REQ_PERMS = 42
+        /** Camera "review" intent (shows the capture with the gallery's swipe-through view). */
+        private const val ACTION_REVIEW = "com.android.camera.action.REVIEW"
+        /** Also listed under <queries> in the manifest. */
+        private val KNOWN_GALLERIES = listOf("com.sec.android.gallery3d", "com.google.android.apps.photos")
         private const val RED = 0xFFF5372B.toInt()
         const val EXTRA_SKIP_REPORT = "skip_report"
     }
