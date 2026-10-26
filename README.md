@@ -41,7 +41,8 @@ Horizon-locked video for every Android phone. HorizonCam brings the Galaxy S26 "
 - Torch, 3 s / 10 s self-timer, rule-of-thirds grid.
 - Spirit level with haptic tick when the phone is level.
 - Volume keys as shutter or zoom. Front camera with optional mirroring.
-- Saves to `DCIM/HorizonCam`, with a last-capture thumbnail.
+- Saves to `DCIM/Camera` next to your other camera pictures (or `DCIM/HorizonCam` if you prefer a separate folder). The gallery button opens the newest capture in the phone's gallery app.
+- Shutter sound can be turned off (quick controls or settings) and is muted when the phone is on silent or vibrate, except where the law requires it.
 
 **Testing helpers**
 - Settings › About › *Camera diagnostics*: copyable device and camera report (including which photo processing extensions the phone offers), plus recent errors.

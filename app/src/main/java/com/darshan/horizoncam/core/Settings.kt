@@ -150,11 +150,8 @@ class Settings(context: Context) {
         get() = p.getBoolean("showHints", true)
         set(v) = putBool("showHints", v)
 
-    var lastSavedUri: String?
-        get() = p.getString("lastSavedUri", null)
-        set(v) = p.edit().putString("lastSavedUri", v).apply()
-
-    var lastSavedIsVideo: Boolean
-        get() = p.getBoolean("lastSavedIsVideo", false)
-        set(v) = putBool("lastSavedIsVideo", v)
+    /** Save to DCIM/HorizonCam instead of the system camera folder (DCIM/Camera). */
+    var separateFolder: Boolean
+        get() = p.getBoolean("separateFolder", false)
+        set(v) = putBool("separateFolder", v)
 }

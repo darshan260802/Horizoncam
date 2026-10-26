@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.1
+- Photos and videos are saved to DCIM/Camera with your other camera pictures by default. Settings › Storage › *Save to a separate folder* switches to DCIM/HorizonCam.
+- The gallery button opens the capture directly in the phone's gallery app (no "open with" chooser), using the camera review action so galleries that support it can swipe through recent captures.
+- The gallery button always shows the newest capture that still exists: deleting a photo or video in the gallery updates it when you come back.
+- Shutter sound: new Sound toggle in the quick controls, the setting moved to the top of Settings › General, and camera sounds stay quiet when the phone is on silent or vibrate. Where the law requires the sound (reported by Android 13+), the setting says so.
+
 ## 0.3.0
 Redesigned to look and work like the latest Galaxy camera, with horizon lock built in.
 

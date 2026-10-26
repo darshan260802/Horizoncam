@@ -34,6 +34,8 @@ import com.darshan.horizoncam.core.Settings
 import com.darshan.horizoncam.core.VideoQuality
 import com.darshan.horizoncam.core.VolumeAction
 import com.darshan.horizoncam.media.EncoderSupport
+import com.darshan.horizoncam.media.MediaSaver
+import com.darshan.horizoncam.media.SoundPolicy
 import com.darshan.horizoncam.sensor.HorizonSensor
 import com.darshan.horizoncam.ui.Ui
 import com.darshan.horizoncam.util.CrashLogger
@@ -173,14 +175,28 @@ class SettingsActivity : Activity() {
 
         section("General")
         card {
-            switch("Grid lines", null, { settings.grid }, { settings.grid = it })
-            switch("Level", "Shows a spirit level in the viewfinder", { settings.levelIndicator }, { settings.levelIndicator = it })
+            if (SoundPolicy.forced()) {
+                switch("Shutter sound", "Required by law in your region", { true }, { }, enabled = { false })
+            } else {
+                switch("Shutter sound", "Also the timer and recording sounds. Always muted when the phone is on silent or vibrate.",
+                    { settings.shutterSound }, { settings.shutterSound = it })
+            }
+            switch("Vibration feedback", null, { settings.haptics }, { settings.haptics = it })
             choice("Volume keys", listOf("Take picture or record video", "Zoom", "System volume"),
                 { when (settings.volumeAction) { VolumeAction.SHUTTER -> 0; VolumeAction.ZOOM -> 1; VolumeAction.OFF -> 2 } },
                 { settings.volumeAction = listOf(VolumeAction.SHUTTER, VolumeAction.ZOOM, VolumeAction.OFF)[it] })
-            switch("Shutter sound", null, { settings.shutterSound }, { settings.shutterSound = it })
-            switch("Vibration feedback", null, { settings.haptics }, { settings.haptics = it })
+            switch("Grid lines", null, { settings.grid }, { settings.grid = it })
+            switch("Level", "Shows a spirit level in the viewfinder", { settings.levelIndicator }, { settings.levelIndicator = it })
             switch("Save selfies as previewed", null, { settings.mirrorFront }, { settings.mirrorFront = it })
+        }
+
+        section("Storage")
+        card {
+            switch("Save to a separate folder", null, { settings.separateFolder }, { settings.separateFolder = it },
+                summary = {
+                    if (settings.separateFolder) "New pictures and videos go to DCIM/${MediaSaver.OWN_FOLDER}"
+                    else "Off: saved to DCIM/${MediaSaver.CAMERA_FOLDER} with your other camera pictures"
+                })
         }
 
         section("About")
@@ -311,10 +327,17 @@ class SettingsActivity : Activity() {
         addRow(row)
     }
 
-    private fun switch(title: String, summaryText: String?, get: () -> Boolean, set: (Boolean) -> Unit) {
+    private fun switch(
+        title: String,
+        summaryText: String?,
+        get: () -> Boolean,
+        set: (Boolean) -> Unit,
+        enabled: () -> Boolean = { true },
+        summary: (() -> String)? = null
+    ) {
         val row = rowBase()
-        val summary = summaryText?.let { summaryView(false).apply { text = it } }
-        row.addView(texts(title, summary), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
+        val summaryView = (summaryText ?: summary?.invoke())?.let { summaryView(false).apply { text = it } }
+        row.addView(texts(title, summaryView), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val sw = Switch(this).apply {
             isChecked = get()
             val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
@@ -324,10 +347,16 @@ class SettingsActivity : Activity() {
             isFocusable = false
         }
         row.addView(sw)
+        val refresh = {
+            sw.isChecked = get()
+            row.alpha = if (enabled()) 1f else 0.4f
+            if (summary != null) summaryView?.text = summary()
+        }
+        refreshers.add(refresh)
+        refresh()
         row.setOnClickListener {
-            val v = !get()
-            set(v)
-            sw.isChecked = v
+            if (!enabled()) return@setOnClickListener
+            set(!get())
             refreshAll()
         }
         addRow(row)
