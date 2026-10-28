@@ -14,8 +14,8 @@ import kotlin.math.max
 import kotlin.math.min
 
 /**
- * Draws the spirit level, focus ring, self-timer countdown, warnings and capture flash
- * above the camera preview.
+ * Draws the spirit level, focus ring, self-timer countdown, warnings and the capture blink
+ * above the camera preview. It only asks for new frames while something on it is changing.
  */
 class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSet? = null) : View(context, attrs) {
 
@@ -30,10 +30,13 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
     var uiRotation = 0f
     var countdown = 0
         set(v) { field = v; invalidate() }
+    var levelColor = Ui.ACCENT
     var warning: String? = null
     var onLevelReached: (() -> Unit)? = null
 
     private val density = resources.displayMetrics.density
+    /** Text follows the system size (capped like the rest of the camera chrome). */
+    private val textScale get() = Ui.chromeTextPx(context, 1f)
     private val linePaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { strokeCap = Paint.Cap.ROUND }
     private val textPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
         color = Color.WHITE
@@ -41,7 +44,8 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
         setShadowLayer(4f, 0f, 1f, 0x99000000.toInt())
     }
     private val ringPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { style = Paint.Style.STROKE }
-    private val flashPaint = Paint().apply { color = Color.WHITE }
+    /** Capture feedback: a brief dim of the viewfinder rather than a bright flash. */
+    private val flashPaint = Paint().apply { color = Color.BLACK }
     private val bgPaint = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = 0x88000000.toInt() }
 
     private var focusX = 0f
@@ -101,7 +105,11 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
         postInvalidateOnAnimation()
     }
 
+    /** Something is fading, ticking or tracking the sensor: keep drawing frames. */
+    private var animating = false
+
     override fun onDraw(canvas: Canvas) {
+        animating = false
         val now = SystemClock.uptimeMillis()
         val st = stateSource?.state()
         val area = if (previewArea.width() > 1) previewArea else RectF(0f, 0f, width.toFloat(), height.toFloat())
@@ -110,13 +118,14 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
 
         // ---- spirit level ----
         if (showLevel && st != null && !st.unstable && countdown <= 0) {
+            animating = true
             val tilt = st.tiltDeg
             val level = abs(tilt) < 0.7
             if (level && !wasLevel) onLevelReached?.invoke()
             wasLevel = level
             val baseLen = min(area.width(), area.height()) * 0.16f
             val gap = 18 * density
-            val accent = 0xFFFFC83D.toInt()
+            val accent = levelColor
             canvas.save()
             canvas.translate(cx, cy)
             // Reference marks aligned with the phone's current orientation.
@@ -144,7 +153,7 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
             linePaint.alpha = 255
             canvas.drawCircle(0f, 0f, 3f * density, linePaint)
             canvas.rotate(uiRotation)
-            textPaint.textSize = 13 * density
+            textPaint.textSize = 13 * textScale
             textPaint.color = if (level) accent else Color.WHITE
             val txt = if (level) "LEVEL" else String.format("%.1f°", abs(tilt))
             canvas.drawText(txt, 0f, -gap - 6 * density, textPaint)
@@ -157,7 +166,7 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
             canvas.save()
             canvas.translate(cx, cy + min(area.height() * 0.3f, 160 * density))
             canvas.rotate(uiRotation)
-            textPaint.textSize = 14 * density
+            textPaint.textSize = 14 * textScale
             textPaint.color = Color.WHITE
             val w = textPaint.measureText(warn) + 28 * density
             val h = 30 * density
@@ -171,11 +180,12 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
             val age = now - focusStart
             val visibleMs = if (focusLocked) Long.MAX_VALUE else 1600L
             if (age < visibleMs) {
+                if (!focusLocked) animating = true
                 val t = min(1f, age / 200f)
                 val r = (44 - 10 * t) * density
                 ringPaint.strokeWidth = 2f * density
                 ringPaint.color = when (focusResult) {
-                    true -> 0xFFFFC83D.toInt()
+                    true -> levelColor
                     false -> 0xFFFF6B5E.toInt()
                     null -> Color.WHITE
                 }
@@ -186,8 +196,8 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
                     canvas.save()
                     canvas.translate(focusX, focusY - r - 14 * density)
                     canvas.rotate(uiRotation)
-                    textPaint.textSize = 12 * density
-                    textPaint.color = 0xFFFFC83D.toInt()
+                    textPaint.textSize = 12 * textScale
+                    textPaint.color = levelColor
                     canvas.drawText("AE/AF LOCK", 0f, 0f, textPaint)
                     canvas.restore()
                 }
@@ -200,6 +210,7 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
         if (evShownAt > 0) {
             val age = now - evShownAt
             if (age < 1400) {
+                animating = true
                 val a = if (age < 1000) 1f else 1f - (age - 1000) / 400f
                 val x = area.right - 34 * density
                 val half = min(area.height() * 0.28f, 110 * density)
@@ -208,14 +219,14 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
                 linePaint.strokeWidth = 2f * density
                 canvas.drawLine(x, cy - half, x, cy + half, linePaint)
                 val ky = cy + half - 2 * half * evFraction
-                linePaint.color = 0xFFFFC83D.toInt()
+                linePaint.color = levelColor
                 linePaint.alpha = (255 * a).toInt()
                 canvas.drawCircle(x, ky, 9 * density, linePaint)
                 canvas.save()
                 canvas.translate(x - 30 * density, ky)
                 canvas.rotate(uiRotation)
-                textPaint.textSize = 13 * density
-                textPaint.color = 0xFFFFC83D.toInt()
+                textPaint.textSize = 13 * textScale
+                textPaint.color = levelColor
                 textPaint.alpha = (255 * a).toInt()
                 canvas.drawText(evText, 0f, 5 * density, textPaint)
                 textPaint.alpha = 255
@@ -227,12 +238,13 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
         if (labelShownAt > 0) {
             val age = now - labelShownAt
             if (age < 1100) {
+                animating = true
                 val a = if (age < 700) 1f else 1f - (age - 700) / 400f
                 canvas.save()
                 canvas.translate(cx, area.top + min(area.height() * 0.18f, 120 * density))
                 canvas.rotate(uiRotation)
-                textPaint.textSize = 30 * density
-                textPaint.color = 0xFFFFC83D.toInt()
+                textPaint.textSize = 30 * textScale
+                textPaint.color = levelColor
                 textPaint.alpha = (255 * a).toInt()
                 canvas.drawText(labelText, 0f, 10 * density, textPaint)
                 textPaint.alpha = 255
@@ -254,12 +266,13 @@ class OverlayView @JvmOverloads constructor(context: Context, attrs: AttributeSe
         // ---- capture flash ----
         if (flashStart > 0) {
             val age = now - flashStart
-            if (age < 180) {
-                flashPaint.alpha = (200 * (1f - age / 180f)).toInt()
+            if (age < 160) {
+                animating = true
+                flashPaint.alpha = (102 * (1f - age / 160f)).toInt()
                 canvas.drawRect(area, flashPaint)
             } else flashStart = 0
         }
 
-        postInvalidateOnAnimation()
+        if (animating) postInvalidateOnAnimation()
     }
 }

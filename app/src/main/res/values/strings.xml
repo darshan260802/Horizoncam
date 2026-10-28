@@ -1,21 +1,23 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">HorizonCam</string>
-    <string name="permission_needed">HorizonCam needs camera access to work. Microphone is used for video sound.</string>
-    <string name="grant">Grant access</string>
-    <string name="open_settings">Open settings</string>
-    <string name="welcome_title">Horizon Lock</string>
-    <string name="welcome_body">Your video stays level, even if you turn the phone all the way round.
-
-• Tap the running-figure icon (top left) to choose Steady or Steady + horizon lock.
+    <string name="permission_title">Level shots, every time</string>
+    <string name="permission_needed">HorizonCam uses the camera to show the viewfinder and to take your photos and videos.</string>
+    <string name="permission_denied">Camera access is off. Turn it on in Settings to use HorizonCam.</string>
+    <string name="grant">Continue</string>
+    <string name="open_settings">Open Settings</string>
+    <string name="welcome_title">How to use HorizonCam</string>
+    <string name="welcome_body">• The horizon button (top left) chooses Off, Steady, or Steady + horizon lock. Its line shows the horizon your video will have.
 • The frame button (bottom left) records landscape while you hold the phone upright, or portrait while you hold it sideways.
-• Tap the four dots (bottom right) for quick controls: torch, timer, ratio, video size, brightness, grid and settings.
+• Quick controls (bottom right): torch, sound, timer, ratio, video size, brightness and guides. Drag the panel down to close it.
 
 Gestures
-• Tap to focus, then drag up or down to change the brightness. Long-press locks focus and exposure.
-• Swipe left or right to change mode. Swipe up or down to switch cameras.
+• Tap to focus, then drag up or down to change the brightness. Touch and hold to lock focus and exposure.
+• Swipe left or right, or drag the mode names, to change mode. Swipe up or down to switch cameras.
 • Drag sideways on the zoom buttons, or pinch, to zoom.
-• While recording: pause, and take photos from the video.
-• Volume keys take a photo or start recording.</string>
+• While recording, you can pause and take photos from the video.
+• The volume keys take a photo or start recording.</string>
     <string name="got_it">Got it</string>
+    <string name="tip_lock">Horizon lock is on. Tilt or turn your phone: your video stays level. Tap to close.</string>
+    <string name="tip_steady">Steady is on: small tilts are straightened. Tap the horizon button for more. Tap to close.</string>
 </resources>

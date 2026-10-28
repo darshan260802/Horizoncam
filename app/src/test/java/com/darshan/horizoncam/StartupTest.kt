@@ -81,7 +81,29 @@ class StartupTest {
         println("STARTUP-NO-PERMISSIONS OK")
     }
 
-    private fun idle() = repeat(6) { Thread.sleep(40); shadowOf(Looper.getMainLooper()).idle() }
+    /** Runs pending work and advances the clock so springs and timers finish. */
+    private fun idle() = repeat(6) { shadowOf(Looper.getMainLooper()).idleFor(java.time.Duration.ofMillis(80)) }
+
+    /** Sends a drag from (x0, y0) by (dx, dy) in [steps] moves over [ms] milliseconds. */
+    private fun drag(a: android.app.Activity, x0: Float, y0: Float, dx: Float, dy: Float, steps: Int = 8, ms: Long = 160) {
+        val root = a.window.decorView
+        val t0 = android.os.SystemClock.uptimeMillis()
+        fun send(action: Int, t: Long, x: Float, y: Float) {
+            val e = android.view.MotionEvent.obtain(t0, t, action, x, y, 0)
+            root.dispatchTouchEvent(e)
+            e.recycle()
+        }
+        send(android.view.MotionEvent.ACTION_DOWN, t0, x0, y0)
+        for (i in 1..steps) send(android.view.MotionEvent.ACTION_MOVE, t0 + ms * i / steps, x0 + dx * i / steps, y0 + dy * i / steps)
+        send(android.view.MotionEvent.ACTION_UP, t0 + ms, x0 + dx, y0 + dy)
+        idle()
+    }
+
+    private fun centreOf(v: android.view.View): FloatArray {
+        val loc = IntArray(2)
+        v.getLocationInWindow(loc)
+        return floatArrayOf(loc[0] + v.width / 2f, loc[1] + v.height / 2f)
+    }
 
     private fun findByDesc(v: android.view.View, desc: String): android.view.View? {
         if (v.contentDescription?.toString() == desc) return v
@@ -130,12 +152,12 @@ class StartupTest {
             click(mode)
             click(R.id.chipRes); tapAllChips(R.id.resMenu)
             click(R.id.btnQuick)
-            for (label in listOf("Torch", "Timer", "Ratio", "Brightness", "Grid", "Level", "Video size", "Speed", "Processing")) {
+            for (label in listOf("Torch", "Sound", "Timer", "Ratio", "Brightness", "Guides", "Video size", "Speed", "Processing")) {
                 val v = findByDesc(a.findViewById(R.id.quickPanel), label) ?: continue
                 v.performClick(); idle()
                 tapAllChips(R.id.quickPanel)
             }
-            tapQuick("Grid"); tapQuick("Level"); tapQuick("Torch")
+            tapQuick("Torch"); tapQuick("Sound"); tapQuick("Sound")
             @Suppress("DEPRECATION") a.onBackPressed()
             idle()
         }
@@ -150,6 +172,68 @@ class StartupTest {
         click(R.id.btnSwitch); click(R.id.btnSwitch)
         c.pause().stop().destroy()
         println("CAMERA-CONTROLS OK")
+    }
+
+    @Test
+    fun gesturesFollowTheFinger() {
+        val app = RuntimeEnvironment.getApplication()
+        shadowOf(app).grantPermissions(Manifest.permission.CAMERA, Manifest.permission.RECORD_AUDIO)
+        addCameras()
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val a = c.get()
+        idle()
+        val prefs = app.getSharedPreferences("horizoncam", 0)
+        fun mode() = prefs.getString("captureMode", "VIDEO")
+
+        // Drag the mode carousel to the left: the next mode (hyperlapse) is picked.
+        val video = centreOf(a.findViewById(R.id.modeVideo))
+        drag(a, video[0], video[1], -260f, 0f)
+        check(mode() == "TIMELAPSE") { "carousel drag left should pick hyperlapse, got ${mode()}" }
+        // And back to the right, past the start: rubber-bands and settles on the first mode.
+        val lapse = centreOf(a.findViewById(R.id.modeTimelapse))
+        drag(a, lapse[0], lapse[1], 900f, 0f)
+        check(mode() == "PHOTO") { "carousel drag right should end on photo, got ${mode()}" }
+
+        // Quick controls: open, then flick the sheet down to close it.
+        a.findViewById<android.view.View>(R.id.btnQuick).performClick()
+        idle()
+        val sheet = a.findViewById<com.darshan.horizoncam.ui.QuickPanel>(R.id.quickPanel)
+        check(sheet.isOpen && sheet.visibility == android.view.View.VISIBLE) { "sheet should be open" }
+        val top = centreOf(sheet)
+        drag(a, top[0], top[1] - sheet.height / 2f + 10f, 0f, 500f, steps = 6, ms = 90)
+        check(!sheet.isOpen && sheet.visibility == android.view.View.GONE) { "flicking down should close the sheet" }
+
+        // A small drag on an open sheet springs back instead of closing.
+        a.findViewById<android.view.View>(R.id.btnQuick).performClick()
+        idle()
+        val top2 = centreOf(sheet)
+        drag(a, top2[0], top2[1] - sheet.height / 2f + 10f, 0f, 40f, steps = 6, ms = 600)
+        check(sheet.isOpen && kotlin.math.abs(sheet.translationY) < 2f) { "small drag should settle back, ty=${sheet.translationY}" }
+
+        c.pause().stop().destroy()
+        println("GESTURES OK")
+    }
+
+    @Test
+    fun microphoneIsAskedWhenRecordingStarts() {
+        val app = RuntimeEnvironment.getApplication()
+        // Camera only: the microphone must not be asked for at launch.
+        shadowOf(app).grantPermissions(Manifest.permission.CAMERA)
+        app.getSharedPreferences("horizoncam", 0).edit().putString("captureMode", "VIDEO").commit()
+        addCameras()
+        val c = Robolectric.buildActivity(MainActivity::class.java).setup()
+        val a = c.get()
+        idle()
+        val launch = shadowOf(a).lastRequestedPermission
+        check(launch == null || Manifest.permission.RECORD_AUDIO !in launch.requestedPermissions) { "microphone asked at launch" }
+        // Pretend the camera is running, then press the shutter: now the microphone is asked for.
+        MainActivity::class.java.getDeclaredField("cameraReady").apply { isAccessible = true }.setBoolean(a, true)
+        a.findViewById<android.view.View>(R.id.shutter).performClick()
+        idle()
+        val req = shadowOf(a).lastRequestedPermission
+        check(req != null && Manifest.permission.RECORD_AUDIO in req.requestedPermissions) { "microphone not asked when recording" }
+        c.pause().stop().destroy()
+        println("MIC-IN-CONTEXT OK")
     }
 
     @Test

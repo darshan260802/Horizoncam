@@ -46,8 +46,9 @@ object SessionInfo {
 }
 
 /**
- * Camera settings in a One UI-like layout: large title, rounded groups, values in blue,
- * switches on the right and native choice dialogs.
+ * Camera settings: large title, rounded groups, switches on the right and native choice dialogs.
+ * Follows the system light or dark theme (colour tokens in values/ and values-night/), uses the
+ * same amber accent as the camera for "on", and gives TalkBack proper switch roles and states.
  */
 class SettingsActivity : Activity() {
 
@@ -56,15 +57,19 @@ class SettingsActivity : Activity() {
     private val refreshers = ArrayList<() -> Unit>()
 
     private fun dp(v: Float) = Ui.dp(this, v)
+    private fun c(id: Int) = getColor(id)
+    private val textColor by lazy { c(R.color.settings_text) }
+    private val secondaryColor by lazy { c(R.color.settings_secondary) }
+
+    private fun rowRipple() = android.graphics.drawable.RippleDrawable(
+        ColorStateList.valueOf(c(R.color.settings_ripple)), null, Ui.rounded(Color.WHITE, 0f))
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         settings = Settings(this)
-        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false)
-        window.statusBarColor = Color.TRANSPARENT
-        window.navigationBarColor = Color.TRANSPARENT
+        if (Build.VERSION.SDK_INT >= 30) window.setDecorFitsSystemWindows(false) else layoutBehindBarsLegacy()
 
-        val root = FrameLayout(this).apply { setBackgroundColor(Color.BLACK) }
+        val root = FrameLayout(this).apply { setBackgroundColor(c(R.color.settings_bg)) }
         val scroll = ScrollView(this).apply { isVerticalScrollBarEnabled = false; isFillViewport = true }
         list = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         scroll.addView(list)
@@ -74,22 +79,24 @@ class SettingsActivity : Activity() {
         val bar = LinearLayout(this).apply {
             orientation = LinearLayout.HORIZONTAL
             gravity = Gravity.CENTER_VERTICAL
-            setBackgroundColor(Color.BLACK)
+            setBackgroundColor(c(R.color.settings_bg))
         }
         val back = ImageButton(this).apply {
             setImageResource(R.drawable.ic_arrow_back)
-            imageTintList = ColorStateList.valueOf(Color.WHITE)
-            background = Ui.ripple(null, Ui.rounded(Color.WHITE, dp(24f).toFloat()))
+            imageTintList = ColorStateList.valueOf(textColor)
+            background = android.graphics.drawable.RippleDrawable(ColorStateList.valueOf(c(R.color.settings_ripple)), null,
+                Ui.rounded(Color.WHITE, dp(24f).toFloat()))
             contentDescription = "Back"
             setOnClickListener { finish() }
         }
         bar.addView(back, LinearLayout.LayoutParams(dp(56f), dp(56f)))
         val smallTitle = TextView(this).apply {
             text = "Camera settings"
-            setTextColor(Color.WHITE)
+            setTextColor(textColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 19f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
             alpha = 0f
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         bar.addView(smallTitle)
         root.addView(bar, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.WRAP_CONTENT))
@@ -99,14 +106,21 @@ class SettingsActivity : Activity() {
         val header = FrameLayout(this)
         header.addView(TextView(this).apply {
             text = "Camera settings"
-            setTextColor(Color.WHITE)
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 34f)
-            typeface = Typeface.create("sans-serif-light", Typeface.NORMAL)
+            setTextColor(textColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 32f)
+            // Regular weight with slightly tighter tracking for a large title (light weights read poorly).
+            typeface = Typeface.create("sans-serif", Typeface.NORMAL)
+            letterSpacing = -0.01f
             gravity = Gravity.CENTER
+            setPadding(dp(24f), 0, dp(24f), 0)
+            isFocusable = true
+            if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
         }, FrameLayout.LayoutParams(FrameLayout.LayoutParams.MATCH_PARENT, FrameLayout.LayoutParams.MATCH_PARENT))
         list.addView(header, LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, headerH))
         scroll.setOnScrollChangeListener { _, _, y, _, _ ->
+            // The small title takes over as the large one scrolls away (continuous, tied to the scroll).
             smallTitle.alpha = ((y - headerH * 0.55f) / (headerH * 0.3f)).coerceIn(0f, 1f)
+            header.alpha = 1f - ((y - headerH * 0.2f) / (headerH * 0.5f)).coerceIn(0f, 1f)
         }
 
         root.setOnApplyWindowInsetsListener { _, insets ->
@@ -120,6 +134,12 @@ class SettingsActivity : Activity() {
         }
         setContentView(root)
         buildContent()
+    }
+
+    @Suppress("DEPRECATION")
+    private fun layoutBehindBarsLegacy() {
+        window.decorView.systemUiVisibility = window.decorView.systemUiVisibility or
+            View.SYSTEM_UI_FLAG_LAYOUT_STABLE or View.SYSTEM_UI_FLAG_LAYOUT_FULLSCREEN or View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
     }
 
     // ------------------------------------------------------------------ content
@@ -237,17 +257,18 @@ class SettingsActivity : Activity() {
     private fun section(title: String) {
         list.addView(TextView(this).apply {
             text = title
-            setTextColor(0xFF8E8E93.toInt())
-            setTextSize(TypedValue.COMPLEX_UNIT_SP, 13.5f)
+            setTextColor(secondaryColor)
+            setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
             typeface = Typeface.create("sans-serif-medium", Typeface.NORMAL)
-            setPadding(dp(30f), dp(20f), dp(30f), dp(8f))
+            setPadding(dp(30f), dp(24f), dp(30f), dp(8f))
+            if (Build.VERSION.SDK_INT >= 28) isAccessibilityHeading = true
         })
     }
 
     private fun card(build: () -> Unit) {
         val c = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
-            background = Ui.rounded(0xFF1C1C1E.toInt(), dp(26f).toFloat())
+            background = Ui.rounded(c(R.color.settings_card), dp(26f).toFloat())
             clipToOutline = true
         }
         currentCard = c
@@ -261,7 +282,7 @@ class SettingsActivity : Activity() {
     private fun addRow(row: View) {
         val c = currentCard ?: return
         if (c.childCount > 0) {
-            c.addView(View(this).apply { setBackgroundColor(0xFF2C2C2E.toInt()) },
+            c.addView(View(this).apply { setBackgroundColor(c(R.color.settings_divider)) },
                 LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 1).apply { leftMargin = dp(22f); rightMargin = dp(22f) })
         }
         c.addView(row)
@@ -274,23 +295,26 @@ class SettingsActivity : Activity() {
         setPadding(dp(22f), dp(14f), dp(18f), dp(14f))
         isClickable = true
         isFocusable = true
-        background = Ui.ripple(null, Ui.rounded(Color.WHITE, 0f))
+        background = rowRipple()
     }
 
     private fun texts(title: String, summary: TextView?): LinearLayout = LinearLayout(this).apply {
         orientation = LinearLayout.VERTICAL
         addView(TextView(this@SettingsActivity).apply {
             text = title
-            setTextColor(Color.WHITE)
+            setTextColor(textColor)
             setTextSize(TypedValue.COMPLEX_UNIT_SP, 17f)
         })
         if (summary != null) addView(summary)
     }
 
-    private fun summaryView(blue: Boolean) = TextView(this).apply {
-        setTextColor(if (blue) BLUE else 0xFF8E8E93.toInt())
+    /** Values and explanations share the secondary colour; the accent only means "on". */
+    @Suppress("UNUSED_PARAMETER")
+    private fun summaryView(value: Boolean) = TextView(this).apply {
+        setTextColor(secondaryColor)
         setTextSize(TypedValue.COMPLEX_UNIT_SP, 14f)
         setPadding(0, dp(2f), 0, 0)
+        setLineSpacing(0f, 1.1f)
     }
 
     private fun choice(
@@ -304,7 +328,7 @@ class SettingsActivity : Activity() {
         val row = rowBase()
         val summary = summaryView(true)
         val col = texts(title, summary)
-        if (summaryHint != null) col.addView(summaryView(false).apply { text = summaryHint; setTextSize(TypedValue.COMPLEX_UNIT_SP, 12.5f) })
+        if (summaryHint != null) col.addView(summaryView(false).apply { text = summaryHint; setTextSize(TypedValue.COMPLEX_UNIT_SP, 13f) })
         row.addView(col, LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val refresh = {
             summary.text = options.getOrElse(get()) { options.first() }
@@ -314,7 +338,7 @@ class SettingsActivity : Activity() {
         refresh()
         row.setOnClickListener {
             if (!enabled() || options.size <= 1) return@setOnClickListener
-            AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+            AlertDialog.Builder(this)
                 .setTitle(title)
                 .setSingleChoiceItems(options.toTypedArray(), get()) { d, which ->
                     set(which)
@@ -340,13 +364,42 @@ class SettingsActivity : Activity() {
         row.addView(texts(title, summaryView), LinearLayout.LayoutParams(0, ViewGroup.LayoutParams.WRAP_CONTENT, 1f))
         val sw = Switch(this).apply {
             isChecked = get()
+            // Solid track and thumb: the stock track is translucent and the state is hard to see on
+            // a light card. Off track vs card is 3.3:1 (light) / 3.8:1 (dark).
+            trackDrawable = android.graphics.drawable.GradientDrawable().apply {
+                cornerRadius = dp(12f).toFloat()
+                setSize(dp(44f), dp(24f))
+                setColor(Color.WHITE)
+            }
+            // The thumb carries a ring in the track colour, so it reads as sitting inside the track.
+            fun knob(fill: Int, ring: Int) = android.graphics.drawable.GradientDrawable().apply {
+                shape = android.graphics.drawable.GradientDrawable.OVAL
+                setSize(dp(24f), dp(24f))
+                setColor(fill)
+                setStroke(dp(3f), ring)
+            }
+            thumbDrawable = android.graphics.drawable.StateListDrawable().apply {
+                addState(intArrayOf(android.R.attr.state_checked), knob(c(R.color.settings_switch_on_thumb), c(R.color.settings_accent)))
+                addState(intArrayOf(), knob(c(R.color.settings_switch_off_thumb), c(R.color.settings_switch_off_track)))
+            }
+            showText = false
             val states = arrayOf(intArrayOf(android.R.attr.state_checked), intArrayOf())
-            thumbTintList = ColorStateList(states, intArrayOf(BLUE, 0xFFE5E5EA.toInt()))
-            trackTintList = ColorStateList(states, intArrayOf(0x993E91FF.toInt(), 0xFF48484A.toInt()))
+            trackTintList = ColorStateList(states, intArrayOf(c(R.color.settings_accent), c(R.color.settings_switch_off_track)))
             isClickable = false
             isFocusable = false
+            importantForAccessibility = View.IMPORTANT_FOR_ACCESSIBILITY_NO
         }
         row.addView(sw)
+        // TalkBack: announce the row as a switch with its on/off state.
+        row.accessibilityDelegate = object : View.AccessibilityDelegate() {
+            override fun onInitializeAccessibilityNodeInfo(host: View, info: android.view.accessibility.AccessibilityNodeInfo) {
+                super.onInitializeAccessibilityNodeInfo(host, info)
+                info.className = Switch::class.java.name
+                info.isCheckable = true
+                info.isChecked = get()
+                info.isEnabled = enabled()
+            }
+        }
         val refresh = {
             sw.isChecked = get()
             row.alpha = if (enabled()) 1f else 0.4f
@@ -358,6 +411,7 @@ class SettingsActivity : Activity() {
             if (!enabled()) return@setOnClickListener
             set(!get())
             refreshAll()
+            row.sendAccessibilityEvent(android.view.accessibility.AccessibilityEvent.TYPE_VIEW_CLICKED)
         }
         addRow(row)
     }
@@ -375,7 +429,7 @@ class SettingsActivity : Activity() {
     // ------------------------------------------------------------------ dialogs
 
     private fun showText(title: String, text: String, copyLabel: String?) {
-        val b = AlertDialog.Builder(this, android.R.style.Theme_DeviceDefault_Dialog_Alert)
+        val b = AlertDialog.Builder(this)
             .setTitle(title)
             .setMessage(text.take(6000))
             .setNegativeButton("Close", null)
@@ -415,7 +469,6 @@ class SettingsActivity : Activity() {
     }
 
     companion object {
-        private const val BLUE = 0xFF3E91FF.toInt()
         val HYPER_SPEEDS = listOf(2, 5, 10, 15, 30, 60)
     }
 }

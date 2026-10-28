@@ -146,9 +146,15 @@ class Settings(context: Context) {
         get() = p.getInt("photoProcessing", -1)
         set(v) = putInt("photoProcessing", v)
 
-    var showHints: Boolean
-        get() = p.getBoolean("showHints", true)
-        set(v) = putBool("showHints", v)
+    /** The one-time horizon lock tip has been shown. */
+    var tipShown: Boolean
+        get() = p.getBoolean("tipShown", false)
+        set(v) = putBool("tipShown", v)
+
+    /** The microphone has been asked for once (when the first video was started). */
+    var micAsked: Boolean
+        get() = p.getBoolean("micAsked", false)
+        set(v) = putBool("micAsked", v)
 
     /** Save to DCIM/HorizonCam instead of the system camera folder (DCIM/Camera). */
     var separateFolder: Boolean

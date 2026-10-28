@@ -5,4 +5,15 @@
     <color name="ink">#FF0B0F17</color>
     <color name="ic_launcher_background">#FF0E1726</color>
     <color name="text_dim">#FF9AA3B2</color>
+    <!-- Settings screen tokens (light). Contrast: secondary 5.2:1 on card, accent 5.65:1 on card. -->
+    <color name="settings_bg">#FFF2F2F7</color>
+    <color name="settings_card">#FFFFFFFF</color>
+    <color name="settings_text">#FF000000</color>
+    <color name="settings_secondary">#FF6C6C70</color>
+    <color name="settings_divider">#FFE5E5EA</color>
+    <color name="settings_accent">#FF995700</color>
+    <color name="settings_ripple">#1F000000</color>
+    <color name="settings_switch_on_thumb">#FFFFFFFF</color>
+    <color name="settings_switch_off_thumb">#FFFFFFFF</color>
+    <color name="settings_switch_off_track">#FF8E8E93</color>
 </resources>

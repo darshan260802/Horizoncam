@@ -1,5 +1,43 @@
 # Changelog
 
+## 1.0.0
+First production release. The interface was reviewed against Apple's Human Interface Guidelines
+(principles, accessibility, color, type, motion, writing) and rebuilt with fluid, physical motion.
+The full review and design system are in docs/DESIGN.md.
+
+**Design**
+- New signature: a live horizon glyph in the top bar. Its line shows the horizon your video will have: it tilts with your hand when leveling is off, and stays level with Steady or horizon lock. Each mode also has its own shape, so state never depends on color alone.
+- One accent everywhere: amber means on, selected or locked, on the camera screen and in settings.
+- Settings follow the system light or dark theme, with checked contrast in both.
+- Scrims behind the top bar and the bottom controls keep labels readable over a bright sky (white text at least 7:1 at the mode labels).
+
+**Motion**
+- Every movement uses springs: interruptible, starting from what is on screen, and carrying the finger's velocity.
+- Controls press in on touch-down.
+- The mode carousel follows your finger and snaps to the nearest mode with a tick.
+- The quick-controls sheet has a grabber. Drag or flick it down to close; it rubber-bands when pulled up.
+- Menus grow out of their buttons. The zoom selection slides between lenses.
+- Controls turn with the phone on a rotation spring.
+- The capture blink is a gentle dim instead of a white flash.
+- With Android's "Remove animations" on, everything switches to instant changes and fades.
+
+**Accessibility**
+- Text follows the system size: up to 200% in settings and menus, capped at 130% for labels over the viewfinder so the controls keep their layout.
+- All touch targets are at least 48 dp.
+- TalkBack:
+  - announces switches and toggles with their on/off state, and modes, zoom buttons and menu items with their selection;
+  - reads the shutter's action ("Take photo", "Start recording", "Stop recording") and the recording time;
+  - reads every on-screen message aloud.
+- Android 14+ contrast setting: heavier scrims.
+
+**Behavior**
+- The camera permission screen has a single Continue button. The microphone is asked for when you first record a video with sound, not at launch.
+- The first-run dialog is replaced by a one-time tip at the horizon button that closes on tap.
+- No vibration while recording, because it would reach the microphone and the stabilizer. The shutter still answers.
+- Camera errors are plain sentences with a next step, such as "Another app is using the camera. Close it and try again."
+- Quick controls: grid and level are combined into Guides. Changes update the panel in place, so the brightness slider doesn't stutter.
+- The overlay only redraws while something on it changes, which saves battery during long recordings.
+
 ## 0.3.1
 - Photos and videos are saved to DCIM/Camera with your other camera pictures by default. Settings › Storage › *Save to a separate folder* switches to DCIM/HorizonCam.
 - The gallery button opens the capture directly in the phone's gallery app (no "open with" chooser), using the camera review action so galleries that support it can swipe through recent captures.

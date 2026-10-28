@@ -8,28 +8,48 @@
     <SurfaceView
         android:id="@+id/preview"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:importantForAccessibility="no" />
 
     <!-- Fades the preview while the camera switches. -->
     <View
         android:id="@+id/curtain"
         android:layout_width="match_parent"
         android:layout_height="match_parent"
-        android:background="@android:color/black" />
+        android:background="@android:color/black"
+        android:importantForAccessibility="no" />
 
     <com.darshan.horizoncam.ui.OverlayView
         android:id="@+id/overlay"
         android:layout_width="match_parent"
-        android:layout_height="match_parent" />
+        android:layout_height="match_parent"
+        android:contentDescription="Viewfinder. Tap to focus, swipe sideways to change mode." />
 
-    <!-- Top bar: stabilization / horizon lock on the left, resolution on the right. -->
+    <!-- Scrims keep chrome legible over a bright viewfinder (sized in code). -->
+    <View
+        android:id="@+id/scrimTop"
+        android:layout_width="match_parent"
+        android:layout_height="120dp"
+        android:layout_gravity="top"
+        android:background="@drawable/bg_scrim_top"
+        android:importantForAccessibility="no" />
+
+    <View
+        android:id="@+id/scrimBottom"
+        android:layout_width="match_parent"
+        android:layout_height="280dp"
+        android:layout_gravity="bottom"
+        android:background="@drawable/bg_scrim_bottom"
+        android:importantForAccessibility="no" />
+
+    <!-- Top bar: horizon lock on the left, status in the middle, video size on the right. -->
     <FrameLayout
         android:id="@+id/topBar"
         android:layout_width="match_parent"
         android:layout_height="56dp"
         android:layout_gravity="top"
-        android:paddingStart="12dp"
-        android:paddingEnd="12dp">
+        android:paddingStart="8dp"
+        android:paddingEnd="8dp">
 
         <ImageButton
             android:id="@+id/btnSteady"
@@ -37,24 +57,23 @@
             android:layout_height="48dp"
             android:layout_gravity="start|center_vertical"
             android:background="?android:attr/selectableItemBackgroundBorderless"
-            android:contentDescription="Stabilization and horizon lock"
-            android:scaleType="center"
-            android:src="@drawable/ic_horizon_lock"
-            android:tint="@android:color/white" />
+            android:contentDescription="Stabilization"
+            android:scaleType="center" />
 
         <TextView
             android:id="@+id/recTime"
             android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_height="32dp"
             android:layout_gravity="center"
             android:background="@drawable/bg_rec"
             android:fontFamily="sans-serif-medium"
+            android:fontFeatureSettings="tnum"
             android:gravity="center"
             android:paddingStart="12dp"
             android:paddingEnd="12dp"
             android:text="00:00"
             android:textColor="@android:color/white"
-            android:textSize="14sp"
+            android:textSize="15sp"
             android:visibility="gone" />
 
         <TextView
@@ -62,35 +81,37 @@
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:layout_gravity="center"
-            android:textColor="#B3FFFFFF"
-            android:textSize="11.5sp" />
+            android:accessibilityLiveRegion="polite"
+            android:fontFamily="sans-serif-medium"
+            android:textColor="@android:color/white"
+            android:textSize="13sp" />
 
         <TextView
             android:id="@+id/chipRes"
             android:layout_width="wrap_content"
-            android:layout_height="30dp"
+            android:layout_height="48dp"
             android:layout_gravity="end|center_vertical"
-            android:layout_marginEnd="4dp"
             android:background="@drawable/bg_chip_outline"
-            android:contentDescription="Resolution"
             android:fontFamily="sans-serif-medium"
             android:gravity="center"
-            android:paddingStart="10dp"
-            android:paddingEnd="10dp"
+            android:minWidth="64dp"
+            android:paddingStart="12dp"
+            android:paddingEnd="12dp"
             android:text="FHD 30"
             android:textColor="@android:color/white"
-            android:textSize="12.5sp" />
+            android:textSize="13sp" />
     </FrameLayout>
 
-    <!-- Drop-down menus under the top bar. -->
+    <!-- Drop-down menus; they grow out of their buttons. -->
     <LinearLayout
         android:id="@+id/steadyMenu"
-        android:layout_width="300dp"
+        android:layout_width="312dp"
         android:layout_height="wrap_content"
         android:layout_gravity="top|start"
-        android:layout_marginStart="12dp"
+        android:layout_marginStart="10dp"
         android:layout_marginTop="60dp"
         android:background="@drawable/bg_menu"
+        android:elevation="8dp"
         android:orientation="vertical"
         android:paddingTop="8dp"
         android:paddingBottom="8dp"
@@ -102,18 +123,42 @@
         android:layout_height="wrap_content"
         android:layout_gravity="top|end"
         android:layout_marginTop="60dp"
-        android:layout_marginEnd="12dp"
+        android:layout_marginEnd="10dp"
         android:background="@drawable/bg_menu"
+        android:elevation="8dp"
         android:orientation="vertical"
         android:padding="11dp"
         android:visibility="gone" />
 
-    <!-- Bottom: quick controls, zoom capsule, modes, shutter row. -->
+    <!-- One-time tip about horizon lock (closes on tap). -->
+    <TextView
+        android:id="@+id/tipBubble"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:layout_gravity="top|start"
+        android:layout_marginStart="12dp"
+        android:layout_marginTop="60dp"
+        android:layout_marginEnd="64dp"
+        android:background="@drawable/bg_tip"
+        android:elevation="6dp"
+        android:maxWidth="300dp"
+        android:minHeight="48dp"
+        android:paddingStart="16dp"
+        android:paddingTop="12dp"
+        android:paddingEnd="16dp"
+        android:paddingBottom="12dp"
+        android:textColor="@android:color/white"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
+    <!-- Bottom: quick controls, zoom, modes, shutter row. -->
     <LinearLayout
         android:id="@+id/bottomPanel"
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:layout_gravity="bottom"
+        android:clipChildren="false"
+        android:clipToPadding="false"
         android:orientation="vertical"
         android:paddingBottom="8dp">
 
@@ -133,12 +178,12 @@
 
             <ImageButton
                 android:id="@+id/btnFrame"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_gravity="start|center_vertical"
                 android:layout_marginStart="18dp"
                 android:background="@drawable/bg_round_glass"
-                android:contentDescription="Recording frame orientation"
+                android:contentDescription="Recording frame"
                 android:scaleType="center"
                 android:src="@drawable/ic_orientation_auto"
                 android:tint="@android:color/white" />
@@ -151,13 +196,13 @@
                 android:background="@drawable/bg_capsule"
                 android:gravity="center"
                 android:orientation="horizontal"
-                android:paddingStart="4dp"
-                android:paddingEnd="4dp" />
+                android:paddingStart="2dp"
+                android:paddingEnd="2dp" />
 
             <ImageButton
                 android:id="@+id/btnQuick"
-                android:layout_width="46dp"
-                android:layout_height="46dp"
+                android:layout_width="48dp"
+                android:layout_height="48dp"
                 android:layout_gravity="end|center_vertical"
                 android:layout_marginEnd="18dp"
                 android:background="@drawable/bg_round_glass"
@@ -167,31 +212,37 @@
                 android:tint="@android:color/white" />
         </FrameLayout>
 
-        <LinearLayout
-            android:id="@+id/modeRow"
-            android:layout_width="wrap_content"
-            android:layout_height="wrap_content"
-            android:layout_gravity="center_horizontal"
-            android:layout_marginTop="6dp"
-            android:layout_marginBottom="6dp"
-            android:gravity="center"
-            android:orientation="horizontal">
+        <!-- Mode carousel: the selected mode stays centred over the shutter. -->
+        <FrameLayout
+            android:id="@+id/modeStrip"
+            android:layout_width="match_parent"
+            android:layout_height="48dp"
+            android:layout_marginTop="4dp"
+            android:layout_marginBottom="4dp">
 
-            <TextView
-                android:id="@+id/modePhoto"
-                style="@style/ModeText"
-                android:text="PHOTO" />
+            <com.darshan.horizoncam.ui.ModeCarousel
+                android:id="@+id/modeRow"
+                android:layout_width="wrap_content"
+                android:layout_height="48dp"
+                android:layout_gravity="start|center_vertical"
+                android:gravity="center_vertical">
 
-            <TextView
-                android:id="@+id/modeVideo"
-                style="@style/ModeText"
-                android:text="VIDEO" />
+                <TextView
+                    android:id="@+id/modePhoto"
+                    style="@style/ModeText"
+                    android:text="PHOTO" />
 
-            <TextView
-                android:id="@+id/modeTimelapse"
-                style="@style/ModeText"
-                android:text="HYPERLAPSE" />
-        </LinearLayout>
+                <TextView
+                    android:id="@+id/modeVideo"
+                    style="@style/ModeText"
+                    android:text="VIDEO" />
+
+                <TextView
+                    android:id="@+id/modeTimelapse"
+                    style="@style/ModeText"
+                    android:text="HYPERLAPSE" />
+            </com.darshan.horizoncam.ui.ModeCarousel>
+        </FrameLayout>
 
         <FrameLayout
             android:id="@+id/controlsRow"
@@ -200,22 +251,24 @@
 
             <ImageView
                 android:id="@+id/thumb"
-                android:layout_width="54dp"
-                android:layout_height="54dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="34dp"
+                android:layout_marginStart="32dp"
                 android:background="@drawable/bg_thumb"
-                android:contentDescription="Open last capture"
+                android:clickable="true"
+                android:contentDescription="Open last capture in gallery"
+                android:focusable="true"
                 android:padding="2dp"
                 android:scaleType="centerCrop"
                 android:src="@drawable/ic_photo_library" />
 
             <ImageButton
                 android:id="@+id/btnPause"
-                android:layout_width="54dp"
-                android:layout_height="54dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:layout_gravity="start|center_vertical"
-                android:layout_marginStart="34dp"
+                android:layout_marginStart="32dp"
                 android:background="@drawable/bg_round_glass"
                 android:contentDescription="Pause recording"
                 android:scaleType="center"
@@ -231,22 +284,22 @@
 
             <ImageButton
                 android:id="@+id/btnSwitch"
-                android:layout_width="54dp"
-                android:layout_height="54dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:layout_gravity="end|center_vertical"
-                android:layout_marginEnd="34dp"
+                android:layout_marginEnd="32dp"
                 android:background="@drawable/bg_round_glass"
-                android:contentDescription="Switch camera"
+                android:contentDescription="Switch to front camera"
                 android:scaleType="center"
                 android:src="@drawable/ic_flip_camera_android"
                 android:tint="@android:color/white" />
 
             <ImageButton
                 android:id="@+id/btnSnap"
-                android:layout_width="54dp"
-                android:layout_height="54dp"
+                android:layout_width="56dp"
+                android:layout_height="56dp"
                 android:layout_gravity="end|center_vertical"
-                android:layout_marginEnd="34dp"
+                android:layout_marginEnd="32dp"
                 android:background="@drawable/bg_round_glass"
                 android:contentDescription="Take a photo while recording"
                 android:scaleType="center"
@@ -264,7 +317,9 @@
         android:layout_marginStart="32dp"
         android:layout_marginEnd="32dp"
         android:background="@drawable/bg_toast"
+        android:elevation="6dp"
         android:gravity="center"
+        android:minHeight="44dp"
         android:paddingStart="18dp"
         android:paddingTop="10dp"
         android:paddingEnd="18dp"
@@ -289,21 +344,45 @@
             android:layout_width="96dp"
             android:layout_height="96dp"
             android:layout_marginBottom="24dp"
+            android:importantForAccessibility="no"
             android:src="@drawable/ic_launcher_foreground" />
 
         <TextView
+            android:id="@+id/permissionTitle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginBottom="8dp"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:text="@string/permission_title"
+            android:textColor="@android:color/white"
+            android:textSize="22sp" />
+
+        <TextView
+            android:id="@+id/permissionText"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
             android:gravity="center"
+            android:lineSpacingMultiplier="1.15"
             android:text="@string/permission_needed"
-            android:textColor="@android:color/white"
+            android:textColor="#FFA1A1A8"
             android:textSize="16sp" />
 
         <Button
             android:id="@+id/btnGrant"
             android:layout_width="wrap_content"
             android:layout_height="wrap_content"
-            android:layout_marginTop="24dp"
-            android:text="@string/grant" />
+            android:layout_marginTop="28dp"
+            android:background="@drawable/bg_button_accent"
+            android:fontFamily="sans-serif-medium"
+            android:minWidth="160dp"
+            android:minHeight="48dp"
+            android:paddingStart="28dp"
+            android:paddingEnd="28dp"
+            android:stateListAnimator="@null"
+            android:text="@string/grant"
+            android:textAllCaps="false"
+            android:textColor="#FF000000"
+            android:textSize="16sp" />
     </LinearLayout>
 </FrameLayout>

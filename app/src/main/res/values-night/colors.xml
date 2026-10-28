@@ -1,0 +1,14 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Settings screen tokens (dark). Contrast: secondary 5.9:1 on card, accent 11.0:1 on card. -->
+    <color name="settings_bg">#FF000000</color>
+    <color name="settings_card">#FF1C1C1E</color>
+    <color name="settings_text">#FFFFFFFF</color>
+    <color name="settings_secondary">#FF98989F</color>
+    <color name="settings_divider">#FF2C2C2E</color>
+    <color name="settings_accent">#FFFFC83D</color>
+    <color name="settings_ripple">#33FFFFFF</color>
+    <color name="settings_switch_on_thumb">#FF000000</color>
+    <color name="settings_switch_off_thumb">#FFE5E5EA</color>
+    <color name="settings_switch_off_track">#FF76767C</color>
+</resources>

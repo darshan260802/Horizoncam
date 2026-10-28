@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- View tags that hold the springs driving each animated property (ui/Spring.kt). -->
+    <item name="spring_x" type="id" />
+    <item name="spring_y" type="id" />
+    <item name="spring_scale" type="id" />
+    <item name="spring_alpha" type="id" />
+    <item name="spring_rotation" type="id" />
+</resources>

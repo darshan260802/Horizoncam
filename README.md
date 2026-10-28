@@ -21,13 +21,24 @@ Horizon-locked video for every Android phone. HorizonCam brings the Galaxy S26 "
 - **Leveled photos**: the JPEG is straightened using the phone's orientation at the exact moment of exposure, then cropped to 4:3, 16:9 or 1:1.
 - Camera input resolution is chosen automatically so the crop keeps full output detail where the hardware allows.
 
-**Familiar layout** (modelled on the current Galaxy camera, with original icons)
-- Top: stabilization / horizon lock menu on the left, video size chip on the right.
-- Bottom: frame button, zoom buttons and quick controls, then the PHOTO / VIDEO / HYPERLAPSE carousel, then gallery, shutter and camera switch. While recording: pause and snapshot buttons.
-- Quick controls panel: settings, torch, timer, ratio, video size or picture processing, brightness and white balance, grid and level.
-- Settings screen with a large title, grouped cards, switches and choice dialogs.
+**Interface** (see [docs/DESIGN.md](docs/DESIGN.md) for the review and design system)
+- Familiar Galaxy-style layout:
+  - top: horizon button and video size;
+  - bottom: frame button, zoom buttons and quick controls, then the PHOTO / VIDEO / HYPERLAPSE carousel, then gallery, shutter and camera switch.
+- Live horizon glyph: the line in the top-left button shows the horizon your video will have.
+- Fluid, interruptible spring motion throughout:
+  - the mode carousel follows your finger;
+  - the quick-controls sheet can be dragged or flicked closed;
+  - menus grow out of their buttons;
+  - controls press in on touch-down.
+- Accessible:
+  - text scales with the system setting;
+  - 48 dp touch targets;
+  - TalkBack labels and on/off states;
+  - legible over a bright viewfinder;
+  - respects "Remove animations" and the system contrast setting.
+- Settings follow the system light or dark theme.
 - Swipe sideways to change mode, swipe up or down to switch cameras, drag after tap-to-focus to change brightness, drag sideways on the zoom buttons to zoom.
-- Smooth transitions when switching camera or mode, plus haptic feedback.
 
 **Image quality**
 - Highest native-resolution camera stream (up to 12 MP), downsampled with multi-sample anti-aliasing and optional sharpening.
@@ -62,6 +73,8 @@ All builds (CI, local and offline) are signed with the shared test key in `keyst
 ./gradlew testDebugUnitTest      # geometry tests + Robolectric start-up smoke test
 ```
 Requires JDK 17+ and the Android SDK (compileSdk 36). Android Studio installs everything automatically.
+
+`./gradlew testDebugUnitTest` also runs the Robolectric UI tests: start-up with and without permissions, every camera control, the carousel and sheet gestures, the gallery button and the settings screen.
 
 ### Offline build (no Android SDK)
 `tools/offline-build.sh` builds a signed APK without the Android SDK. It uses Debian packages (`aapt`, `zipalign`, `apksigner`), the Kotlin compiler from GitHub, the Android framework jar from Maven Central and Google's official D8 dexer from the R8 release bucket. This is how APKs are produced in sandboxes without access to Google Maven.
